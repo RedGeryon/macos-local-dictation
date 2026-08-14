@@ -1,0 +1,21 @@
+diff --git a/src/asr/CMakeLists.txt b/src/asr/CMakeLists.txt
+index b06b524..006b01e 100644
+--- a/src/asr/CMakeLists.txt
++++ b/src/asr/CMakeLists.txt
+@@ -126,6 +126,15 @@ if(WIN32)
+     endif()
+ endif()
+ 
++# Homebrew's current SentencePiece headers expose absl::Status in their public
++# API but its dylib does not propagate Abseil as a link dependency. Link the
++# imported status target explicitly for native Apple Silicon builds.
++if(APPLE)
++    find_package(absl CONFIG REQUIRED)
++    target_link_libraries(nemo_speech_asr PRIVATE
++        absl::status absl::statusor absl::strings)
++endif()
++
+ if(NEMO_SPEECH_WITH_FLASHLIGHT)
+     target_compile_definitions(nemo_speech_asr PUBLIC NEMO_SPEECH_WITH_FLASHLIGHT=1)
+     target_link_libraries(nemo_speech_asr PRIVATE flashlight-text flashlight-text-kenlm)
+
