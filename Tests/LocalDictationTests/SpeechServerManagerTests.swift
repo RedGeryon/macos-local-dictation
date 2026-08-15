@@ -3,6 +3,24 @@ import XCTest
 @testable import LocalDictation
 
 final class SpeechServerManagerTests: XCTestCase {
+    private final class NeverReadyURLProtocol: URLProtocol, @unchecked Sendable {
+        override class func canInit(with request: URLRequest) -> Bool { true }
+        override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+        override func startLoading() {
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 503,
+                httpVersion: "HTTP/1.1",
+                headerFields: nil
+            )!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocolDidFinishLoading(self)
+        }
+
+        override func stopLoading() {}
+    }
+
     func testLaunchPlanUsesLocalhostAndExplicitModel() {
         let plan = SpeechServerLaunchPlan(
             executableURL: URL(fileURLWithPath: "/engine/nemo-speech"),
@@ -18,6 +36,57 @@ final class SpeechServerManagerTests: XCTestCase {
             "--host", "127.0.0.1", "--port", "17866"
         ])
         XCTAssertEqual(plan.readyURL.absoluteString, "http://127.0.0.1:17866/ready")
+        XCTAssertEqual(
+            plan.fileTranscriptionURL.absoluteString,
+            "http://127.0.0.1:17866/v1/audio/transcriptions"
+        )
+    }
+
+    @MainActor
+    func testCancelledModelLoadImmediatelyReapsItsWorker() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let engine = directory.appendingPathComponent("nemo-speech")
+        let model = directory.appendingPathComponent("model.gguf")
+        try Data("#!/bin/sh\nexec /bin/sleep 60\n".utf8).write(to: engine)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: engine.path)
+        try Data("GGUFfixture".utf8).write(to: model)
+
+        let sessionConfiguration = URLSessionConfiguration.ephemeral
+        sessionConfiguration.protocolClasses = [NeverReadyURLProtocol.self]
+        let manager = SpeechServerManager(session: URLSession(configuration: sessionConfiguration))
+        let startTask = Task {
+            try await manager.start(
+                configuration: AppConfiguration(engineURL: engine, modelURL: model)
+            )
+        }
+
+        for _ in 0..<100 where manager.processIdentifier == nil {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let processIdentifier = try XCTUnwrap(manager.processIdentifier)
+        startTask.cancel()
+
+        do {
+            try await startTask.value
+            XCTFail("Cancelled startup unexpectedly succeeded")
+        } catch is CancellationError {
+            // Expected.
+        }
+
+        XCTAssertFalse(manager.isRunning)
+        XCTAssertNil(manager.processIdentifier)
+        for _ in 0..<100 where Darwin.kill(processIdentifier, 0) == 0 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertNotEqual(
+            Darwin.kill(processIdentifier, 0),
+            0,
+            "A cancelled or superseded model load must not leave a worker behind"
+        )
     }
 
     @MainActor
@@ -80,8 +149,21 @@ final class SpeechServerManagerTests: XCTestCase {
             client.onError = { error in
                 XCTFail("Realtime client error: \(error)")
             }
-            client.connect(to: realtimeURL, automaticPunctuation: true)
+            let requestedLanguage = environment["LOCAL_DICTATION_LANGUAGE"]
+                ?? configuration.recognitionLanguage.rawValue
+            let testLiveLanguageUpdate = environment["LOCAL_DICTATION_TEST_LANGUAGE_UPDATE"] == "1"
+            client.connect(
+                to: realtimeURL,
+                automaticPunctuation: true,
+                languageCode: testLiveLanguageUpdate
+                    ? RecognitionLanguage.englishUS.rawValue
+                    : requestedLanguage
+            )
             await fulfillment(of: [connected], timeout: 5)
+
+            if testLiveLanguageUpdate {
+                client.updateLanguage(requestedLanguage, automaticPunctuation: true)
+            }
 
             client.beginUtterance()
             let batchSize = AudioCaptureService.transportBatchSamples * MemoryLayout<Int16>.size
@@ -98,7 +180,12 @@ final class SpeechServerManagerTests: XCTestCase {
             let words = finalTranscript
                 .lowercased()
                 .split(whereSeparator: { !$0.isLetter })
-            XCTAssertEqual(words.last, "country", "The final spoken word must survive immediate commit: \(finalTranscript)")
+            let expectedFinalWord = environment["LOCAL_DICTATION_EXPECTED_FINAL_WORD"] ?? "country"
+            XCTAssertEqual(
+                words.last.map(String.init),
+                expectedFinalWord,
+                "The final spoken word must survive immediate commit: \(finalTranscript)"
+            )
         } catch {
             await manager.stop()
             throw error
@@ -137,6 +224,8 @@ final class SpeechServerManagerTests: XCTestCase {
             client.connect(
                 to: try XCTUnwrap(manager.realtimeURL),
                 automaticPunctuation: true,
+                languageCode: environment["LOCAL_DICTATION_LANGUAGE"]
+                    ?? configuration.recognitionLanguage.rawValue,
                 wordTimestamps: true,
                 endpointingMilliseconds: 800
             )
@@ -209,7 +298,12 @@ final class SpeechServerManagerTests: XCTestCase {
                 client.onError = { error in
                     XCTFail("Concurrent realtime client error: \(error)")
                 }
-                client.connect(to: realtimeURL, automaticPunctuation: true)
+                client.connect(
+                    to: realtimeURL,
+                    automaticPunctuation: true,
+                    languageCode: environment["LOCAL_DICTATION_LANGUAGE"]
+                        ?? configuration.recognitionLanguage.rawValue
+                )
             }
             await fulfillment(of: [connected], timeout: 5)
 
@@ -227,9 +321,14 @@ final class SpeechServerManagerTests: XCTestCase {
             clients.forEach { $0.disconnect() }
 
             XCTAssertEqual(finals.count, 2)
+            let expectedFinalWord = environment["LOCAL_DICTATION_EXPECTED_FINAL_WORD"] ?? "country"
             for transcript in finals {
                 let words = transcript.lowercased().split(whereSeparator: { !$0.isLetter })
-                XCTAssertEqual(words.last, "country", "Both audio channels must retain the final word: \(transcript)")
+                XCTAssertEqual(
+                    words.last.map(String.init),
+                    expectedFinalWord,
+                    "Both audio channels must retain the final word: \(transcript)"
+                )
             }
         } catch {
             await manager.stop()
@@ -267,7 +366,12 @@ final class SpeechServerManagerTests: XCTestCase {
                 completed.fulfill()
             }
             client.onError = { error in XCTFail("Quiet channel error: \(error)") }
-            client.connect(to: try XCTUnwrap(manager.realtimeURL), automaticPunctuation: true)
+            client.connect(
+                to: try XCTUnwrap(manager.realtimeURL),
+                automaticPunctuation: true,
+                languageCode: environment["LOCAL_DICTATION_LANGUAGE"]
+                    ?? configuration.recognitionLanguage.rawValue
+            )
             await fulfillment(of: [connected], timeout: 5)
             client.beginUtterance()
             client.finalize()

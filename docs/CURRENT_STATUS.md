@@ -1,20 +1,26 @@
 # Current implementation status
 
-Updated August 12, 2026.
+Updated August 15, 2026.
 
 | Capability | Status |
 |---|---|
-| Native menu-bar app and guided setup | Implemented |
+| Native menu-bar app and guided setup | First run asks for a model, then downloads, verifies, selects, and starts it automatically; valid saved paths are reused |
 | Bundled NeMo-Speech.cpp Metal runtime | Implemented; model remains external |
 | Model validation, launch, readiness, restart, and shutdown | Implemented and real-process tested |
+| English + multilingual model selection | Implemented; official Q8 downloads and distinct terms linked in setup |
+| Managed in-app model downloads | Visible progress, fixed location, cancel/retry, pinned size/SHA-256/GGUF verification, automatic selection |
+| Model/language clarity | Ready is green; English-only model exposes English only; multilingual model exposes Auto Detect and locale choices |
+| Spanish and multilingual language prompts | Auto Detect plus 32 out-of-box locales passed to all recognition streams |
 | Native microphone capture and 16 kHz PCM16 conversion | Implemented |
 | Release-tail capture and ordered final-audio commit | Implemented and final-word tested |
 | Persistent stateful realtime WebSocket | Implemented and real-audio tested |
 | Fn and Control–Option–Space push-to-talk | Implemented |
 | Hands-free mode and 30-minute ceiling | Implemented |
+| Existing audio/video file transcription | WAV, MP3, M4A/ALAC, AAC, CAF, AIFF, FLAC, MP4, M4V, MOV; adaptive estimate before confirm; fast warm offline path; cancel and automatic text output |
 | Concurrent microphone + Mac system-audio transcription | Implemented and dual-stream engine tested |
 | Timestamped You/Speaker conversation text files | Pause-bounded, audio-time ordered, and real-engine tested |
 | Conversation stop/save crash regression | Fixed from a macOS crash report and lifecycle tested |
+| Sleep/wake and quit recovery | One cancellable model-load operation, wake-time worker recycle, stale-child protection, and five-second forced-quit deadline |
 | Microphone speaker-echo suppression | Post-ASR fuzzy time-aligned filtering; no audio-route processing; unit tested |
 | AirPods capture lifecycle | Unified microphone/system ScreenCaptureKit stream on macOS 15+; outputs removed atomically |
 | Conversation final-word tail | 900 ms post-Stop capture, ordered PCM flush, and dual-final wait |
@@ -38,6 +44,30 @@ PCM sample. It starts the bundled-equivalent Metal runtime, connects through
 `WS /v1/realtime`, streams the audio in 80 ms batches, commits immediately after
 the final batch, checks that the expected final spoken word remains last, and verifies that no engine PID
 survives shutdown.
+
+Model startup is now a single owned operation. Selecting another model,
+sleeping, waking, restarting, or quitting cancels the prior loader and reaps its
+child before another can start. The process manager ignores delayed termination
+callbacks from older workers. Wake recovery waits briefly for any conversation
+save, then reloads the selected persisted model after macOS restores audio
+devices. Quit remains available during loading and forces child cleanup after a
+five-second deadline rather than leaving the menu app in an unbounded Preparing
+state.
+
+The file workflow was exercised end to end against one warm multilingual Q8
+worker with eleven generated fixtures covering every advertised audio codec and
+video container. All eleven produced non-empty transcripts in 7.64 seconds
+total, including one model startup of roughly five seconds. A separate runtime
+benchmark processed a repeated 33-second offline corpus in 0.33 seconds (about
+100× realtime) on the test Apple Silicon Mac. These numbers validate the fast
+path but are not universal performance claims; confirmation starts from a
+conservative 25× realtime estimate and learns from each Mac.
+
+The multilingual validation generates a temporary Spanish fixture locally,
+opens the official Nemotron 3.5 Q8 with the same runtime, sends `es-ES` in the
+live realtime session update, and verifies the last Spanish word survives
+immediate commit. It also runs in `auto` mode during release validation. The
+temporary audio is removed after the test.
 
 The same validation opens two stateful realtime connections, sends audio to
 both concurrently, commits both streams, and asserts that both transcripts keep

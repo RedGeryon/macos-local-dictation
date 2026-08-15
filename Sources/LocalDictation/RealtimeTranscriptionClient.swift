@@ -60,6 +60,7 @@ final class RealtimeTranscriptionClient: @unchecked Sendable {
     func connect(
         to url: URL,
         automaticPunctuation: Bool,
+        languageCode: String = RecognitionLanguage.englishUS.rawValue,
         wordTimestamps: Bool = false,
         endpointingMilliseconds: Int? = nil
     ) {
@@ -70,25 +71,54 @@ final class RealtimeTranscriptionClient: @unchecked Sendable {
             self.socket = socket
             socket.resume()
             self.receiveNext(on: socket)
-            var configuration: [String: Any] = [
-                "sample_rate": 16_000,
-                "language": "en-US",
-                "automatic_punctuation": automaticPunctuation,
-                "word_timestamps": wordTimestamps,
-                "speaker_diarization": false
-            ]
-            if let endpointingMilliseconds {
-                configuration["endpointing_ms"] = endpointingMilliseconds
-            }
-            self.sendJSONLocked([
-                "type": "session.update",
-                "session": configuration
-            ])
+            self.sendJSONLocked(Self.sessionUpdateMessage(
+                automaticPunctuation: automaticPunctuation,
+                languageCode: languageCode,
+                wordTimestamps: wordTimestamps,
+                endpointingMilliseconds: endpointingMilliseconds
+            ))
         }
+    }
+
+    static func sessionUpdateMessage(
+        automaticPunctuation: Bool,
+        languageCode: String,
+        wordTimestamps: Bool,
+        endpointingMilliseconds: Int?
+    ) -> [String: Any] {
+        var configuration: [String: Any] = [
+            "sample_rate": 16_000,
+            "language": languageCode,
+            "automatic_punctuation": automaticPunctuation,
+            "word_timestamps": wordTimestamps,
+            "speaker_diarization": false
+        ]
+        if let endpointingMilliseconds {
+            configuration["endpointing_ms"] = endpointingMilliseconds
+        }
+        return [
+            "type": "session.update",
+            "session": configuration
+        ]
     }
 
     func disconnect() {
         queue.async { [weak self] in self?.disconnectLocked(notify: true) }
+    }
+
+    func updateLanguage(_ languageCode: String, automaticPunctuation: Bool) {
+        queue.async { [weak self] in
+            guard let self, self.connected else {
+                self?.notifyError(RealtimeTranscriptionError.notConnected)
+                return
+            }
+            self.sendJSONLocked(Self.sessionUpdateMessage(
+                automaticPunctuation: automaticPunctuation,
+                languageCode: languageCode,
+                wordTimestamps: false,
+                endpointingMilliseconds: nil
+            ))
+        }
     }
 
     func beginUtterance() {

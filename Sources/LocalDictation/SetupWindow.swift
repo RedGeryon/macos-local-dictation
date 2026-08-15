@@ -77,6 +77,43 @@ struct SetupView: View {
                     }
                 }
 
+                if coordinator.isInstalledInApplications && !modelReady {
+                    GroupBox("Choose your speech model") {
+                        VStack(alignment: .leading, spacing: 14) {
+                            Text("Choose once and Local Dictation will download, verify, select, and start the model for you. If you already chose a valid model file, that saved location is used instead.")
+                                .font(.callout)
+                                .fixedSize(horizontal: false, vertical: true)
+
+                            HStack(alignment: .top, spacing: 12) {
+                                firstRunModelChoice(
+                                    title: "English",
+                                    detail: "Fast, accurate English dictation · about 700 MB",
+                                    badge: "Recommended",
+                                    action: coordinator.downloadEnglishModel
+                                )
+                                firstRunModelChoice(
+                                    title: "Multilingual",
+                                    detail: "Spanish, English, and many more languages · about 742 MB",
+                                    badge: "Multilingual",
+                                    action: coordinator.downloadMultilingualModel
+                                )
+                            }
+
+                            modelDownloadStatus
+
+                            HStack {
+                                Button("Use a Model Already on This Mac…", action: coordinator.chooseModel)
+                                Spacer()
+                                Text("Models are stored in Application Support, outside the app.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(6)
+                    }
+                    .disabled(!coordinator.canEditSpeechConfiguration)
+                }
+
                 GroupBox("Speech engine and model") {
                     VStack(spacing: 14) {
                         readinessRow(
@@ -88,10 +125,36 @@ struct SetupView: View {
                         Divider()
                         readinessRow(
                             ready: modelReady,
-                            title: "English streaming model",
+                            title: coordinator.configuration.modelVariant.title,
                             detail: coordinator.configuration.modelURL.path,
                             action: coordinator.chooseModel
                         )
+                        Divider()
+                        HStack(alignment: .center, spacing: 12) {
+                            Image(systemName: "character.bubble")
+                                .frame(width: 22)
+                                .foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("Transcription language").font(.headline)
+                                Text(languageDetail)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if coordinator.configuration.modelVariant.supportsLanguageSelection {
+                                Picker("Transcription language", selection: languageBinding) {
+                                    ForEach(RecognitionLanguage.allCases) { language in
+                                        Text(language.title).tag(language)
+                                    }
+                                }
+                                .labelsHidden()
+                                .frame(width: 235)
+                            } else {
+                                Label("English", systemImage: "checkmark.circle.fill")
+                                    .foregroundStyle(.green)
+                                    .frame(width: 235, alignment: .trailing)
+                            }
+                        }
                         Divider()
                         HStack(alignment: .top, spacing: 12) {
                             statusIcon(coordinator.speechEngineReady)
@@ -108,6 +171,7 @@ struct SetupView: View {
                     }
                     .padding(6)
                 }
+                .disabled(!coordinator.canEditSpeechConfiguration)
 
                 GroupBox("Permissions for system-wide dictation") {
                     VStack(alignment: .leading, spacing: 12) {
@@ -169,6 +233,38 @@ struct SetupView: View {
                 }
                 .disabled(!coordinator.isInstalledInApplications)
 
+                GroupBox("Transcribe an audio or video file") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Choose a media file, review its duration and estimated transcription time, then confirm. The warm local model uses its fast offline path and saves an easy-to-read text file automatically.")
+                            .font(.callout)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(MediaFileTranscriptionService.supportedFormatsDescription)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if coordinator.state == .transcribingFile || coordinator.state == .inspectingMedia {
+                            ProgressView(value: coordinator.mediaFileProgress, total: 1)
+                            Text(coordinator.mediaFileStatusText)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        HStack {
+                            if coordinator.state == .transcribingFile || coordinator.state == .inspectingMedia {
+                                Button("Cancel", action: coordinator.cancelMediaFileTranscription)
+                            } else {
+                                Button("Choose Audio or Video…", action: coordinator.chooseMediaFileForTranscription)
+                                    .buttonStyle(.borderedProminent)
+                                    .disabled(!coordinator.canTranscribeMediaFile)
+                            }
+                            Button("Open File Transcripts Folder", action: coordinator.openFileTranscriptsFolder)
+                        }
+                        Text("Saved automatically in Documents → Local Dictation Transcripts → File Transcripts. Temporary converted audio is deleted after processing.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(6)
+                }
+
                 GroupBox("How to dictate") {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("1. Place the cursor in any normal text field.")
@@ -176,20 +272,63 @@ struct SetupView: View {
                         Text("3. The final transcript is inserted at the original cursor. Press Esc to cancel.")
                         Text("Long microphone-only dictation: choose Start Long Dictation from the menu.")
                         Text("Conversation file: press \(ConversationShortcut.title) once to start and again to stop. The menu-bar timer shows when recording is active.")
+                        Text("Existing media: choose Transcribe Audio or Video File from the menu or Settings.")
                     }
                     .font(.callout)
                     .padding(6)
                 }
 
                 GroupBox("Official model download and terms") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Nemotron Speech Streaming English 0.6B Q8 is governed separately by the NVIDIA Open Model License Agreement.")
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Choose one model. Local Dictation downloads it from NVIDIA, verifies it, stores it in Application Support, and selects it automatically.")
                             .font(.callout)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("English 0.6B Q8").font(.headline)
+                            Text("Best choice when every speaker uses English. Approximately 700 MB.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            HStack {
+                                Button("Download and Use English", action: coordinator.downloadEnglishModel)
+                                    .buttonStyle(.borderedProminent)
+                                    .disabled(
+                                        coordinator.modelDownloadState.isDownloading
+                                            || !coordinator.canEditSpeechConfiguration
+                                    )
+                                Button("Model Page", action: coordinator.openEnglishModelPage)
+                                Button("License", action: coordinator.openEnglishModelLicense)
+                            }
+                        }
+                        Divider()
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(spacing: 6) {
+                                Text("Multilingual 0.6B Q8").font(.headline)
+                                Text("Spanish + 30 other locales")
+                                    .font(.caption.bold())
+                                    .foregroundStyle(.blue)
+                            }
+                            Text("Use for Spanish, mixed-language use, or automatic language detection. Includes es-US and es-ES. Approximately 742 MB.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            HStack {
+                                Button("Download and Use Multilingual", action: coordinator.downloadMultilingualModel)
+                                    .buttonStyle(.borderedProminent)
+                                    .disabled(
+                                        coordinator.modelDownloadState.isDownloading
+                                            || !coordinator.canEditSpeechConfiguration
+                                    )
+                                Button("Model Page", action: coordinator.openMultilingualModelPage)
+                                Button("OpenMDW 1.1 License", action: coordinator.openMultilingualModelLicense)
+                            }
+                        }
+                        Divider()
+                        modelDownloadStatus
+                        Divider()
                         HStack {
-                            Button("Download Page", action: coordinator.openModelPage)
-                            Button("Model License", action: coordinator.openModelLicense)
                             Button("Runtime Source", action: coordinator.openRuntimePage)
                         }
+                        Text("The models use different licenses and are not bundled with the app. Review the terms for the model you choose.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                     .padding(6)
                 }
@@ -237,7 +376,117 @@ struct SetupView: View {
         }
     }
 
+    private var languageBinding: Binding<RecognitionLanguage> {
+        Binding(
+            get: { coordinator.configuration.recognitionLanguage },
+            set: { language in coordinator.setRecognitionLanguage(language) }
+        )
+    }
+
+    private var languageDetail: String {
+        if coordinator.configuration.modelVariant == .english {
+            return "This model supports English only."
+        }
+        if coordinator.configuration.recognitionLanguage == .automatic {
+            return "The model detects the language for each pause-bounded utterance."
+        }
+        return "Sent to every quick-dictation and conversation recognition stream."
+    }
+
+    @ViewBuilder
+    private var modelDownloadStatus: some View {
+        switch coordinator.modelDownloadState {
+        case .idle:
+            VStack(alignment: .leading, spacing: 3) {
+                Label("Downloads stay visible here", systemImage: "arrow.down.circle")
+                    .font(.headline)
+                Text("Save location: \(modelsDirectoryPath)")
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+        case .downloading(let specification, let receivedBytes, let totalBytes):
+            VStack(alignment: .leading, spacing: 7) {
+                HStack {
+                    Label("Downloading \(specification.title)", systemImage: "arrow.down.circle.fill")
+                        .font(.headline)
+                    Spacer()
+                    Text(downloadPercentage(received: receivedBytes, total: totalBytes))
+                        .font(.caption.monospacedDigit())
+                    Button("Cancel", action: coordinator.cancelModelDownload)
+                }
+                ProgressView(
+                    value: Double(receivedBytes),
+                    total: Double(max(totalBytes, 1))
+                )
+                Text("\(fileSize(receivedBytes)) of \(fileSize(totalBytes))")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                Text("Saving to: \(specification.destinationURL.path)")
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+        case .completed(let specification, let fileURL):
+            VStack(alignment: .leading, spacing: 6) {
+                Label(completedDownloadTitle(specification, fileURL: fileURL), systemImage: "checkmark.circle.fill")
+                    .font(.headline)
+                    .foregroundStyle(.green)
+                Text(fileURL.path)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                Button("Show Model in Finder", action: coordinator.revealDownloadedModel)
+            }
+        case .failed(let specification, let message):
+            VStack(alignment: .leading, spacing: 6) {
+                Label("\(specification.title) download failed", systemImage: "exclamationmark.triangle.fill")
+                    .font(.headline)
+                    .foregroundStyle(.red)
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                Button("Try Again") {
+                    if specification.variant == .multilingual {
+                        coordinator.downloadMultilingualModel()
+                    } else {
+                        coordinator.downloadEnglishModel()
+                    }
+                }
+            }
+        }
+    }
+
+    private var modelsDirectoryPath: String {
+        AppConfiguration.supportDirectory()
+            .appendingPathComponent("Models", isDirectory: true)
+            .path
+    }
+
+    private func fileSize(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: max(bytes, 0), countStyle: .file)
+    }
+
+    private func downloadPercentage(received: Int64, total: Int64) -> String {
+        guard total > 0 else { return "Starting…" }
+        return "\(min(100, Int((Double(received) / Double(total)) * 100)))%"
+    }
+
+    private func completedDownloadTitle(
+        _ specification: SpeechModelDownloadSpecification,
+        fileURL: URL
+    ) -> String {
+        if coordinator.configuration.modelURL.standardizedFileURL == fileURL.standardizedFileURL {
+            return "\(specification.title) downloaded, verified, and selected"
+        }
+        return "\(specification.title) downloaded and verified; it will be selected when transcription finishes"
+    }
+
     private var overallStatusText: String {
+        if coordinator.state == .ready {
+            return "Ready to dictate"
+        }
         if coordinator.speechEngineReady && coordinator.permissionStatus.allGranted && coordinator.globalShortcutOperational {
             return "Ready to dictate"
         }
@@ -251,6 +500,9 @@ struct SetupView: View {
     }
 
     private var overallStatusSymbol: String {
+        if coordinator.state == .ready {
+            return "checkmark.circle.fill"
+        }
         if coordinator.speechEngineReady && coordinator.permissionStatus.allGranted && coordinator.globalShortcutOperational {
             return "checkmark.circle.fill"
         }
@@ -259,6 +511,9 @@ struct SetupView: View {
     }
 
     private var overallStatusColor: Color {
+        if coordinator.state == .ready {
+            return .green
+        }
         if coordinator.speechEngineReady && coordinator.permissionStatus.allGranted && coordinator.globalShortcutOperational {
             return .green
         }
@@ -289,6 +544,35 @@ struct SetupView: View {
             Spacer()
             Button("Choose…", action: action)
         }
+    }
+
+    private func firstRunModelChoice(
+        title: String,
+        detail: String,
+        badge: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(title).font(.headline)
+                Spacer()
+                Text(badge)
+                    .font(.caption.bold())
+                    .foregroundStyle(.blue)
+            }
+            Text(detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button("Download and Set Up (title)", action: action)
+                .buttonStyle(.borderedProminent)
+                .disabled(coordinator.modelDownloadState.isDownloading)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, minHeight: 112, alignment: .topLeading)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(.quaternary))
     }
 
     private func permissionRow(

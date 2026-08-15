@@ -3,20 +3,21 @@
 > Working title: public branding is intentionally undecided pending a
 > trademark review.
 
-An open-source, local-first menu-bar app for English dictation in normal macOS
-text fields. Hold a key, speak, release, and the final transcript is inserted
-at the cursor.
+An open-source, local-first menu-bar app for English, Spanish, and multilingual
+dictation in normal macOS text fields. Hold a key, speak, release, and the final
+transcript is inserted at the cursor.
 
 The app uses NVIDIA's Apache-2.0
-[NeMo-Speech.cpp](https://github.com/NVIDIA/NeMo-Speech.cpp) runtime and the
-separately downloaded
-[Nemotron Speech Streaming English 0.6B Q8 model](https://huggingface.co/nvidia/nemotron-speech-streaming-en-0.6b).
+[NeMo-Speech.cpp](https://github.com/NVIDIA/NeMo-Speech.cpp) runtime and one
+separately downloaded model: NVIDIA's specialized
+[Nemotron Speech Streaming English 0.6B Q8](https://huggingface.co/nvidia/nemotron-speech-streaming-en-0.6b)
+or [Nemotron 3.5 ASR Streaming Multilingual 0.6B Q8](https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b).
 Model weights are never included in this repository or application package.
 
 ## Install the current Mac build
 
 Generate the installer with `bash scripts/generate-dmg.sh`, open
-`dist/Local-Dictation-0.3.7-macOS-arm64.dmg`, and drag **Local Dictation** to
+`dist/Local-Dictation-0.3.11-macOS-arm64.dmg`, and drag **Local Dictation** to
 **Applications**. This development build is ad-hoc signed; a public download
 must be Developer ID signed and notarized.
 
@@ -29,18 +30,52 @@ runtime source revision is pinned in
 [the bundled-component record](docs/BUNDLED_COMPONENTS.md) for reproducible
 packaging.
 
-On a new Mac, read the
+### Choose and download a model
+
+On first setup, the app asks whether you want the English or multilingual
+model. It downloads the selected official Q8 file without leaving the app,
+shows byte and percentage progress plus the permanent save location, and offers
+a Cancel control. Once complete, it verifies the pinned file size, SHA-256, and
+GGUF signature, selects the model automatically, and starts the local worker.
+If a valid model path was saved by an earlier installation, setup uses it and
+does not ask again.
+The verified files are stored under
+`~/Library/Application Support/LocalDictation/Models`.
+
+For English-only use, NVIDIA recommends its specialized English model. Read its
 [NVIDIA Open Model License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/),
-then download the model:
+then download it with:
 
 ```bash
-bash scripts/download-model.sh --accept-nvidia-model-license
+bash scripts/download-model.sh --model english --accept-nvidia-model-license
 ```
 
-Alternatively, download `nemotron-speech-streaming-en-0.6b.q8_0.gguf` from the
-official model page and choose it in the app's setup window. The packaged app
-contains the small NeMo-Speech.cpp runtime and its required notices, but not the
-approximately 700 MB model.
+[Manual English Q8 GGUF download](https://huggingface.co/nvidia/nemotron-speech-streaming-en-0.6b/resolve/main/nemotron-speech-streaming-en-0.6b.q8_0.gguf?download=true)
+
+For Spanish or multilingual use, read the multilingual model's
+[OpenMDW 1.1 license](https://openmdw.ai/license/1-1/), then download:
+
+```bash
+bash scripts/download-model.sh --model multilingual --accept-openmdw-license
+```
+
+[Manual multilingual Q8 GGUF download](https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b/resolve/main/nemotron-3.5-asr-streaming-0.6b.q8_0.gguf?download=true)
+
+The multilingual model supports automatic language detection and 32
+out-of-box transcription locales. These include Spanish (`es-US`, `es-ES`),
+English, French, Portuguese, German, Italian, and others listed on the
+[official model card](https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b#supported-languages).
+Setup exposes Auto Detect plus every out-of-box locale. A fixed Spanish locale
+is best for Spanish-only dictation; Auto Detect is useful when utterances may
+change language. This is transcription, not translation.
+
+The terminal commands and manual links are fallback options. Normally, click
+**Download and Use English** or **Download and Use Multilingual** in Settings.
+To fetch both through the terminal, pass `--model all` plus both acceptance
+flags. The app loads only the currently selected file. The packaged app contains
+the small NeMo-Speech.cpp runtime and its required notices, but neither the
+approximately 700 MB English model nor the approximately 742 MB multilingual
+model.
 
 ## Dictate
 
@@ -73,6 +108,30 @@ insertion, but automatic Return is blocked in known terminal applications.
 Password fields and custom editors that expose neither standard Accessibility
 text insertion nor paste are intentionally unsupported. Clipboard fallback
 preserves and restores all pasteboard representations.
+
+## Transcribe an existing audio or video file
+
+Choose **Transcribe Audio or Video File…** from the menu-bar app or Settings.
+After selecting a file, Local Dictation shows its format, duration, size,
+selected language, automatic save location, and an estimated completion time
+before **Transcribe and Save** can be confirmed. Estimates begin conservatively
+and adapt to completed jobs on that Mac and selected model.
+
+Supported inputs are:
+
+- Audio: WAV, MP3, M4A (AAC or ALAC), AAC, CAF, AIFF, and FLAC.
+- Video with an audio track: MP4, M4V, and MOV.
+- Maximum duration: four hours per file.
+
+The app decodes the selected track once to compact mono 16 kHz PCM, streams the
+temporary upload from disk to the already-warm localhost model, and uses the
+runtime's fast offline inference path. It does not load the whole file into
+memory or reload model weights. Cancel stops both conversion and transcription.
+Microphone, Accessibility, and System Audio permissions are not required for
+this file-only workflow.
+The temporary audio is removed afterward, and the finished text opens from:
+
+`~/Documents/Local Dictation Transcripts/File Transcripts`
 
 ## Transcribe a two-sided conversation
 
@@ -123,7 +182,10 @@ diarization within the system-audio channel is not supported.
 ## Implemented support
 
 - Apple Silicon and macOS 14 or newer.
-- English transcription with punctuation and capitalization.
+- English transcription with punctuation and capitalization using the
+  specialized English model.
+- Optional multilingual transcription with Auto Detect or any of the 32
+  out-of-box locales from Nemotron 3.5 ASR, including `es-US` and `es-ES`.
 - Warm, stateful streaming inference with 80 ms transport batches and the
   runtime's 160 ms low-latency model configuration.
 - Fn or Control–Option–Space push-to-talk; menu-controlled long-dictation mode.
@@ -138,8 +200,15 @@ diarization within the system-audio channel is not supported.
   consumed while dictating so macOS cannot redirect it to another system action.
 - A 180 ms release tail, synchronized microphone shutdown, and ordered WebSocket
   sends ensure the last spoken words reach the decoder before finalization.
-- A bundled Apache-2.0 runtime, separately downloaded NVIDIA model, and local
-  child-process cleanup on quit.
+- A bundled Apache-2.0 runtime, one selected separately downloaded NVIDIA
+  model, and local child-process cleanup on quit.
+- Green Ready indicators in both Settings and the menu, with English shown as
+  the only language when the English-only model is selected.
+- Sleep/wake recovery that cancels stale model loads, recycles the local worker
+  after audio devices return, and caps quit at five seconds before force cleanup.
+- Fast local file transcription for common audio and video containers, with a
+  pre-confirmation adaptive time estimate, bounded-memory conversion, visible
+  progress/cancel, and automatically opened `.txt` output.
 - Two-channel conversation transcription from microphone and Mac system audio,
   with labeled, timestamped local text files and no persisted audio or video.
 - Control–Option–C conversation toggle with a compact menu-bar recording timer,
@@ -159,12 +228,17 @@ accounts, and AI rewriting are not supported by this version.
 swift test
 bash scripts/audit-public-repo.sh
 bash scripts/test-real-engine.sh
+bash scripts/test-multilingual-model.sh
 bash scripts/generate-dmg.sh
 ```
 
 The opt-in real test loads the Metal model, streams PCM16 through the same
 WebSocket path used by the microphone, verifies the transcript, and confirms
 the worker exits cleanly.
+`test-multilingual-model.sh` creates a temporary Spanish fixture with macOS's
+built-in voice, sends `es-ES` through that same WebSocket path, checks the final
+Spanish word, and deletes the fixture. It requires the separately downloaded
+multilingual model and never commits audio or weights.
 
 Advanced packagers who already built the runtime can run
 `bash scripts/package-dmg.sh` directly. Set
@@ -174,6 +248,7 @@ the ignored `build/` and `dist/` directories.
 
 ## Project documentation
 
+- [Release notes](CHANGELOG.md)
 - [Building and releasing](docs/BUILDING_AND_RELEASE.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Implemented status](docs/CURRENT_STATUS.md)
@@ -209,6 +284,6 @@ is not intentionally written to disk. No account, analytics, or cloud service
 is used. See [Privacy](PRIVACY.md), [legal and licensing](docs/LEGAL_AND_LICENSING.md),
 and [third-party notices](THIRD_PARTY_NOTICES.md).
 
-The original app code is MIT licensed. NeMo-Speech.cpp and the NVIDIA model
-retain their separate terms. This project is not affiliated with or endorsed
-by NVIDIA.
+The original app code is MIT licensed. NeMo-Speech.cpp and each NVIDIA model
+retain their separate terms; the two model licenses differ. This project is not
+affiliated with or endorsed by NVIDIA.

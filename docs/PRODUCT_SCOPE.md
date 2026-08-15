@@ -16,10 +16,19 @@ Speaker channel.
 
 - Apple Silicon Macs running macOS 14 or newer.
 - English speech using Nemotron Speech Streaming English 0.6B Q8.
+- Optional multilingual speech using Nemotron 3.5 ASR Streaming 0.6B Q8,
+  with automatic detection or an explicit choice among its 32 out-of-box
+  locales, including Spanish (`es-US` and `es-ES`).
+- One selected model is loaded at a time; changing models restarts the local
+  worker, while changing language updates the warm recognition session without
+  reloading model weights.
 - Fn push-to-talk with Control–Option–Space fallback.
 - Long microphone-only dictation with explicit stop and a 30-minute safety limit.
 - Two-channel conversation transcription with explicit Stop and Save.
 - Text output under Documents with elapsed timestamps and You/Speaker labels.
+- User-confirmed file transcription for WAV, MP3, M4A/ALAC, AAC, CAF, AIFF,
+  FLAC, MP4, M4V, and MOV inputs up to four hours. The selection confirmation
+  shows format, duration, language, output path, and an adaptive time estimate.
 - Independent raw-microphone and clean system-output transcription without
   forcing an input device, followed by conservative time-aligned removal of
   longer near-duplicate ASR phrases from the You channel. The microphone follows
@@ -47,11 +56,19 @@ not supported.
 
 ### Setup explains every external boundary
 
-The package includes the Apache-2.0 runtime and its notices. The model is not
-included. Setup links the official model card and license, validates a chosen
-GGUF, and explains the three dictation permissions plus optional System Audio
-in plain language. Requests are user-initiated one at a time and never chain
-automatically.
+The package includes the Apache-2.0 runtime and its notices. Models are not
+included. Setup downloads either pinned official Q8 file with visible progress,
+Cancel, and a fixed Application Support destination. It links the distinct
+licenses, verifies size, SHA-256, and GGUF format before installation, selects
+the model automatically, and chooses the appropriate default language. Manual
+file selection remains available. Permission requests are user-initiated one at
+a time and never chain automatically.
+
+The English-specific model is fixed to `en-US`. The multilingual model defaults
+to language auto-detection and offers every transcription-ready and
+broad-coverage locale NVIDIA identifies as working out of the box. A selected
+locale is used consistently for quick dictation and both conversation channels.
+The app does not translate between languages.
 
 ### Final text is authoritative
 
@@ -59,6 +76,22 @@ Streaming partials may change. They remain in the overlay and never touch the
 target field. Release keeps capture open for a 180 ms tail, synchronously flushes
 the converter, and queues commit after every PCM send; only the final transcript
 goes through cleanup and insertion.
+
+### Existing media uses the offline fast path
+
+The selected audio track is decoded once into a temporary 16 kHz mono PCM
+multipart body. The file is uploaded from disk to the already-warm local HTTP
+server instead of being retained in memory or replayed at realtime speed. The
+runtime's offline inference path handles the file; the chosen model is not
+reloaded. The temporary body is removed on success, error, or cancellation and
+stale crash remnants are cleaned on a later launch. The resulting readable
+`.txt` document is saved automatically in the File Transcripts subfolder.
+Because the user selects an existing file, this path does not require
+Microphone, Accessibility, or System Audio permission.
+
+Before confirmation, the app estimates duration using a conservative 25×
+realtime baseline. It stores a bounded moving average of completed local jobs
+separately for each model variant, so later estimates reflect the actual Mac.
 
 ### Permissions are purposeful
 
@@ -93,9 +126,10 @@ semantic cursor context, continuous idle microphone, or cloud fallback exists.
 
 ## Not supported
 
-Intel Macs, Windows, Linux, multilingual models, cloud recognition, accounts,
-sync, translation, diarization, custom vocabulary, AI rewriting, mobile apps,
-and Mac App Store distribution are outside this version.
+Intel Macs, Windows, Linux, cloud recognition, accounts, sync, translation,
+adaptation-only languages without model fine-tuning, diarization, custom
+vocabulary, AI rewriting, mobile apps, and Mac App Store distribution are
+outside this version.
 
 ## Public-release gates
 

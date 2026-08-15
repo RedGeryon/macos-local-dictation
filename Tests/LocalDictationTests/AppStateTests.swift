@@ -9,6 +9,8 @@ final class AppStateTests: XCTestCase {
         XCTAssertEqual(AppState.recording(.handsFree).label, "Hands-free")
         XCTAssertEqual(AppState.recordingConversation.label, "Recording conversation")
         XCTAssertEqual(AppState.savingConversation.label, "Saving conversation…")
+        XCTAssertEqual(AppState.inspectingMedia.label, "Reading media file…")
+        XCTAssertEqual(AppState.transcribingFile.label, "Transcribing file…")
         XCTAssertEqual(AppState.installationRequired.label, "Move to Applications")
         XCTAssertEqual(AppState.configurationRequired(.modelMissing).label, "Speech model required")
     }

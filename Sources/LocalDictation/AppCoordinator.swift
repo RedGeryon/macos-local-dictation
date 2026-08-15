@@ -21,11 +21,19 @@ final class AppCoordinator: ObservableObject {
     @Published private(set) var conversationStartedAt: Date?
     @Published private(set) var conversationRestartQueued = false
     @Published private(set) var globalShortcutOperational = false
+    @Published private(set) var modelDownloadState: ModelDownloadState = .idle
+    @Published private(set) var mediaFileName: String?
+    @Published private(set) var mediaFileProgress: Double = 0
+    @Published private(set) var mediaFileStatusText = ""
+    @Published private(set) var mediaFileEstimatedSeconds: TimeInterval = 0
+    @Published private(set) var lastFileTranscriptURL: URL?
 
     let serverManager: SpeechServerManager
     let permissionManager = PermissionManager()
 
     private let realtimeClient = RealtimeTranscriptionClient()
+    private let modelDownloader = ModelDownloader()
+    private let mediaFileTranscriber = MediaFileTranscriptionService()
     private let audioCapture = AudioCaptureService()
     private let hotkeyController = GlobalHotkeyController()
     private let insertionService = TextInsertionService()
@@ -44,8 +52,20 @@ final class AppCoordinator: ObservableObject {
     private var permissionMonitorTask: Task<Void, Never>?
     private var permissionRequestTask: Task<Void, Never>?
     private var permissionRequestID: UUID?
+    private var modelDownloadTask: Task<Void, Never>?
+    private var speechEngineTask: Task<Void, Never>?
+    private var speechEngineOperationID: UUID?
+    private var wakeRecoveryTask: Task<Void, Never>?
+    private var terminationDeadlineTask: Task<Void, Never>?
+    private var mediaFileTranscriptionTask: Task<Void, Never>?
+    private var mediaFileProgressTask: Task<Void, Never>?
+    private var workspaceNotificationObservers: [NSObjectProtocol] = []
+    private var pendingDownloadedModel: (SpeechModelDownloadSpecification, URL)?
+    private var lastModelDownloadMenuPercent = -1
+    private var lastMediaFileMenuPercent = -1
     private var realtimeConnected = false
     private var isQuitting = false
+    private var isPowerTransitioning = false
     private var pushToTalkHeld = false
     private var systemAudioOperational = false
     private var conversationSession: ConversationTranscriptionSession?
@@ -57,10 +77,28 @@ final class AppCoordinator: ObservableObject {
         ApplicationInstallation.isInApplications(Bundle.main.bundleURL)
     }
 
+    var terminationInProgress: Bool { isQuitting }
+
+    var canTranscribeMediaFile: Bool {
+        guard serverManager.isRunning, serverManager.fileTranscriptionURL != nil else { return false }
+        return state == .ready || state == .permissionRequired
+    }
+
+    var canEditSpeechConfiguration: Bool {
+        switch state {
+        case .installationRequired, .configurationRequired, .permissionRequired,
+             .serverUnavailable, .ready, .error:
+            return true
+        default:
+            return false
+        }
+    }
+
     init(serverManager: SpeechServerManager = SpeechServerManager()) {
         self.serverManager = serverManager
         self.serverManager.onStateChange = { [weak self] state in
-            self?.transition(to: state)
+            guard let self, !self.isQuitting else { return }
+            self.transition(to: state)
         }
         realtimeClient.onPartial = { [weak self] text in self?.handlePartial(text) }
         realtimeClient.onFinal = { [weak self] text in self?.handleFinal(text) }
@@ -75,6 +113,7 @@ final class AppCoordinator: ObservableObject {
     func start() {
         menuBarController = MenuBarController(coordinator: self)
         startPermissionMonitoring()
+        startPowerMonitoring()
         transition(to: .starting)
 
         guard isInstalledInApplications else {
@@ -95,24 +134,7 @@ final class AppCoordinator: ObservableObject {
             return
         }
 
-        Task { await startSpeechEngine() }
-    }
-
-    func startSpeechEngine() async {
-        configuration = AppConfiguration()
-        if let issue = configuration.validate() {
-            transition(to: .configurationRequired(issue))
-            showSetup()
-            return
-        }
-
-        do {
-            try await serverManager.start(configuration: configuration)
-            prepareRealtimeConnection()
-        } catch {
-            speechEngineReady = false
-            transition(to: .serverUnavailable(error.localizedDescription))
-        }
+        scheduleSpeechEngineStart(restart: false)
     }
 
     func restartSpeechEngine() {
@@ -120,15 +142,7 @@ final class AppCoordinator: ObservableObject {
         realtimeClient.disconnect()
         realtimeConnected = false
         speechEngineReady = false
-        Task {
-            do {
-                try await serverManager.restart(configuration: configuration)
-                prepareRealtimeConnection()
-            } catch {
-                speechEngineReady = false
-                transition(to: .serverUnavailable(error.localizedDescription))
-            }
-        }
+        scheduleSpeechEngineStart(restart: true)
     }
 
     func requestMicrophonePermission() {
@@ -270,6 +284,100 @@ final class AppCoordinator: ObservableObject {
         }
     }
 
+    func chooseMediaFileForTranscription() {
+        guard canTranscribeMediaFile,
+              mediaFileTranscriptionTask == nil,
+              let endpoint = serverManager.fileTranscriptionURL else { return }
+        let panel = NSOpenPanel()
+        panel.title = "Choose Audio or Video to Transcribe"
+        panel.prompt = "Choose File"
+        panel.message = MediaFileTranscriptionService.supportedFormatsDescription
+        panel.allowedContentTypes = MediaFileTranscriptionService.selectableContentTypes
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let fileURL = panel.url else { return }
+
+        mediaFileName = fileURL.lastPathComponent
+        mediaFileStatusText = "Reading duration and audio track…"
+        mediaFileProgress = 0
+        transition(to: .inspectingMedia)
+        mediaFileTranscriptionTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let information = try await self.mediaFileTranscriber.inspect(fileURL)
+                try Task.checkCancellation()
+                let outputURL = try MediaTranscriptDocument.outputURL(for: fileURL)
+                var estimator = MediaFileTranscriptionEstimator(
+                    modelVariant: self.configuration.modelVariant
+                )
+                let estimatedSeconds = estimator.estimatedSeconds(for: information.duration)
+                guard self.confirmMediaFileTranscription(
+                    information: information,
+                    outputURL: outputURL,
+                    estimatedSeconds: estimatedSeconds
+                ) else {
+                    self.finishMediaFileTranscription(returnToReady: true)
+                    return
+                }
+
+                self.mediaFileEstimatedSeconds = estimatedSeconds
+                self.mediaFileStatusText = "Preparing audio efficiently…"
+                self.transition(to: .transcribingFile)
+                let startedAt = Date()
+                let transcript = try await self.mediaFileTranscriber.transcribe(
+                    information,
+                    endpoint: endpoint,
+                    language: self.configuration.recognitionLanguage
+                ) { [weak self] progress in
+                    Task { @MainActor in self?.handleMediaFileProgress(progress) }
+                }
+                try Task.checkCancellation()
+                try MediaTranscriptDocument.write(
+                    transcript: transcript,
+                    source: information,
+                    modelName: self.configuration.modelVariant.title,
+                    language: self.configuration.recognitionLanguage,
+                    to: outputURL
+                )
+                estimator.record(
+                    duration: information.duration,
+                    elapsed: Date().timeIntervalSince(startedAt)
+                )
+                self.lastFileTranscriptURL = outputURL
+                self.mediaFileProgress = 1
+                self.finishMediaFileTranscription(returnToReady: true)
+                NSWorkspace.shared.open(outputURL)
+                self.showRecoverableMessage("Transcript saved in Documents → Local Dictation Transcripts → File Transcripts.")
+            } catch is CancellationError {
+                self.finishMediaFileTranscription(returnToReady: !self.isPowerTransitioning && !self.isQuitting)
+            } catch {
+                self.finishMediaFileTranscription(returnToReady: !self.isPowerTransitioning && !self.isQuitting)
+                if !self.isQuitting { self.showRecoverableMessage(error.localizedDescription) }
+            }
+        }
+    }
+
+    func cancelMediaFileTranscription() {
+        guard mediaFileTranscriptionTask != nil else { return }
+        mediaFileStatusText = "Canceling…"
+        mediaFileProgressTask?.cancel()
+        mediaFileTranscriptionTask?.cancel()
+        menuBarController?.refresh()
+    }
+
+    func openLastFileTranscript() {
+        guard let lastFileTranscriptURL else { return }
+        NSWorkspace.shared.open(lastFileTranscriptURL)
+    }
+
+    func openFileTranscriptsFolder() {
+        do {
+            NSWorkspace.shared.open(try MediaTranscriptDocument.directory())
+        } catch {
+            showRecoverableMessage("The file-transcript folder could not be opened: \(error.localizedDescription)")
+        }
+    }
+
     func dismissError() {
         overlayController.hide()
         if serverManager.isRunning && realtimeConnected && permissionStatus.allGranted && globalShortcutOperational {
@@ -301,17 +409,23 @@ final class AppCoordinator: ObservableObject {
     }
 
     func chooseEngine() {
+        guard canEditSpeechConfiguration else { return }
         let panel = NSOpenPanel()
         panel.title = "Choose the NeMo-Speech.cpp executable"
         panel.prompt = "Choose Engine"
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
         if panel.runModal() == .OK, let url = panel.url {
-            saveConfiguration(engineURL: url, modelURL: configuration.modelURL)
+            saveConfiguration(
+                engineURL: url,
+                modelURL: configuration.modelURL,
+                recognitionLanguage: configuration.recognitionLanguage
+            )
         }
     }
 
     func chooseModel() {
+        guard canEditSpeechConfiguration else { return }
         let panel = NSOpenPanel()
         panel.title = "Choose the Nemotron Q8 GGUF model"
         panel.prompt = "Choose Model"
@@ -319,8 +433,53 @@ final class AppCoordinator: ObservableObject {
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
         if panel.runModal() == .OK, let url = panel.url {
-            saveConfiguration(engineURL: configuration.engineURL, modelURL: url)
+            saveConfiguration(
+                engineURL: configuration.engineURL,
+                modelURL: url,
+                recognitionLanguage: SpeechModelVariant.identify(url).recommendedLanguage
+            )
         }
+    }
+
+    func downloadEnglishModel() {
+        beginModelDownload(.english)
+    }
+
+    func downloadMultilingualModel() {
+        beginModelDownload(.multilingual)
+    }
+
+    func cancelModelDownload() {
+        modelDownloadTask?.cancel()
+        modelDownloader.cancel()
+    }
+
+    func revealDownloadedModel() {
+        let fileURL: URL?
+        switch modelDownloadState {
+        case .completed(_, let url): fileURL = url
+        default: fileURL = nil
+        }
+        guard let fileURL else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([fileURL])
+    }
+
+    func setRecognitionLanguage(_ language: RecognitionLanguage) {
+        guard canEditSpeechConfiguration,
+              configuration.modelVariant.supportsLanguageSelection else { return }
+        configuration = AppConfiguration(
+            engineURL: configuration.engineURL,
+            modelURL: configuration.modelURL,
+            recognitionLanguage: language
+        )
+        configuration.persist()
+        menuBarController?.refresh()
+
+        guard serverManager.isRunning, realtimeConnected else { return }
+        realtimeClient.updateLanguage(
+            language.rawValue,
+            automaticPunctuation: settings.automaticPunctuation
+        )
     }
 
     func refreshConfigurationAndStart() {
@@ -334,7 +493,7 @@ final class AppCoordinator: ObservableObject {
             transition(to: .configurationRequired(issue))
         } else {
             setupWindowController?.close()
-            Task { await startSpeechEngine() }
+            scheduleSpeechEngineStart(restart: serverManager.isRunning)
         }
     }
 
@@ -351,8 +510,12 @@ final class AppCoordinator: ObservableObject {
         NSWorkspace.shared.open(url)
     }
 
-    func openModelPage() { NSWorkspace.shared.open(AppConfiguration.modelPageURL) }
-    func openModelLicense() { NSWorkspace.shared.open(AppConfiguration.modelLicenseURL) }
+    func openModelPage() { NSWorkspace.shared.open(configuration.modelPageURL) }
+    func openModelLicense() { NSWorkspace.shared.open(configuration.modelLicenseURL) }
+    func openEnglishModelPage() { NSWorkspace.shared.open(AppConfiguration.englishModelPageURL) }
+    func openMultilingualModelPage() { NSWorkspace.shared.open(AppConfiguration.multilingualModelPageURL) }
+    func openEnglishModelLicense() { NSWorkspace.shared.open(AppConfiguration.englishModelLicenseURL) }
+    func openMultilingualModelLicense() { NSWorkspace.shared.open(AppConfiguration.multilingualModelLicenseURL) }
     func openRuntimePage() { NSWorkspace.shared.open(AppConfiguration.runtimePageURL) }
     func openMicrophoneSettings() { permissionManager.openMicrophoneSettings() }
     func openAccessibilitySettings() { permissionManager.openAccessibilitySettings() }
@@ -361,7 +524,7 @@ final class AppCoordinator: ObservableObject {
     func showRemovalInstructions() {
         let alert = NSAlert()
         alert.messageText = "Remove Local Dictation"
-        alert.informativeText = "Move Local Dictation from Applications to the Trash. To also remove the downloaded model, engine, and settings, choose Remove Local Data below. Saved conversation transcripts in Documents are kept unless you delete them separately."
+        alert.informativeText = "Move Local Dictation from Applications to the Trash. To also remove the downloaded model, engine, and settings, choose Remove Local Data below. Saved conversation and media-file transcripts in Documents are kept unless you delete them separately."
         alert.addButton(withTitle: "Done")
         alert.addButton(withTitle: "Remove Local Data…")
         if alert.runModal() == .alertSecondButtonReturn { confirmAndRemoveLocalData() }
@@ -372,17 +535,32 @@ final class AppCoordinator: ObservableObject {
         let alert = NSAlert()
         alert.alertStyle = .critical
         alert.messageText = "Remove downloaded model and local data?"
-        alert.informativeText = "This permanently removes the speech model and engine files stored by Local Dictation, plus its settings, from:\n\n\(supportPath)\n\nA model you chose from another folder and conversation transcripts in Documents are left untouched. The application itself remains until you move it to the Trash."
+        alert.informativeText = "This permanently removes the speech model and engine files stored by Local Dictation, plus its settings, from:\n\n\(supportPath)\n\nA model you chose from another folder and all transcripts in Documents are left untouched. The application itself remains until you move it to the Trash."
         alert.addButton(withTitle: "Remove and Quit")
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 
         isQuitting = true
+        speechEngineTask?.cancel()
+        speechEngineTask = nil
+        speechEngineOperationID = nil
+        wakeRecoveryTask?.cancel()
+        mediaFileTranscriptionTask?.cancel()
+        mediaFileProgressTask?.cancel()
+        cancelModelDownload()
         cancelDictation()
         hotkeyController.stop()
         realtimeClient.disconnect()
-        Task {
-            await serverManager.stop()
+        terminationDeadlineTask?.cancel()
+        terminationDeadlineTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(5))
+            guard !Task.isCancelled, let self, self.isQuitting else { return }
+            self.serverManager.forceStop()
+            NSApp.terminate(nil)
+        }
+        Task { [weak self] in
+            guard let self else { return }
+            await self.serverManager.stop(graceNanoseconds: 1_000_000_000)
             do {
                 let support = AppConfiguration.supportDirectory()
                 if FileManager.default.fileExists(atPath: support.path) {
@@ -403,33 +581,58 @@ final class AppCoordinator: ObservableObject {
     func quit() {
         guard !isQuitting else { return }
         isQuitting = true
+        speechEngineTask?.cancel()
+        speechEngineTask = nil
+        speechEngineOperationID = nil
+        wakeRecoveryTask?.cancel()
+        mediaFileTranscriptionTask?.cancel()
+        mediaFileProgressTask?.cancel()
+        cancelModelDownload()
         cancelDictation()
         hotkeyController.stop()
         realtimeClient.disconnect()
         transition(to: .canceling)
         let activeConversation = conversationSession
         conversationSession = nil
-        Task {
+        // Even if transcript finalization or process shutdown stops responding,
+        // the app will terminate and applicationWillTerminate will reap the child.
+        terminationDeadlineTask?.cancel()
+        terminationDeadlineTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(5))
+            guard !Task.isCancelled, let self, self.isQuitting else { return }
+            self.logger.error("QUIT_DEADLINE_EXCEEDED forcing termination")
+            self.serverManager.forceStop()
+            NSApp.terminate(nil)
+        }
+        Task { [weak self] in
+            guard let self else { return }
             if let activeConversation {
                 _ = try? await activeConversation.stopAndSave()
             }
-            await serverManager.stop()
+            await self.serverManager.stop(graceNanoseconds: 1_000_000_000)
             NSApp.terminate(nil)
         }
     }
 
     func applicationWillTerminate() {
+        speechEngineTask?.cancel()
+        wakeRecoveryTask?.cancel()
+        terminationDeadlineTask?.cancel()
+        mediaFileTranscriptionTask?.cancel()
+        mediaFileProgressTask?.cancel()
         permissionMonitorTask?.cancel()
         permissionRequestTask?.cancel()
         targetCaptureTask?.cancel()
         transientMessageTask?.cancel()
         finalizationDelayTask?.cancel()
         conversationTask?.cancel()
+        cancelModelDownload()
         audioCapture.cancel()
         conversationSession?.closeForApplicationTermination()
         hotkeyController.stop()
         realtimeClient.disconnect()
-        if let pid = serverManager.processIdentifier { Darwin.kill(pid, SIGTERM) }
+        stopPowerMonitoring()
+        serverManager.forceStop()
     }
 
     private func prepareRealtimeConnection() {
@@ -437,13 +640,17 @@ final class AppCoordinator: ObservableObject {
         permissionStatus = permissionManager.status(
             accessibilityOperational: globalShortcutOperational && hotkeyController.isRunning
         )
-        realtimeClient.connect(to: url, automaticPunctuation: settings.automaticPunctuation)
+        realtimeClient.connect(
+            to: url,
+            automaticPunctuation: settings.automaticPunctuation,
+            languageCode: configuration.recognitionLanguage.rawValue
+        )
     }
 
     private func handleRealtimeConnection(_ connected: Bool) {
         realtimeConnected = connected
         speechEngineReady = connected && serverManager.isRunning
-        guard !isQuitting else { return }
+        guard !isQuitting, !isPowerTransitioning else { return }
         if connected {
             activateHotkeysIfPossible()
         } else if serverManager.isRunning {
@@ -496,6 +703,71 @@ final class AppCoordinator: ObservableObject {
                     self.activateHotkeysIfPossible()
                 }
             }
+        }
+    }
+
+    private func startPowerMonitoring() {
+        stopPowerMonitoring()
+        let center = NSWorkspace.shared.notificationCenter
+        workspaceNotificationObservers = [
+            center.addObserver(
+                forName: NSWorkspace.willSleepNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in self?.handleSystemWillSleep() }
+            },
+            center.addObserver(
+                forName: NSWorkspace.didWakeNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in self?.handleSystemDidWake() }
+            }
+        ]
+    }
+
+    private func stopPowerMonitoring() {
+        let center = NSWorkspace.shared.notificationCenter
+        workspaceNotificationObservers.forEach(center.removeObserver)
+        workspaceNotificationObservers.removeAll()
+    }
+
+    private func handleSystemWillSleep() {
+        guard !isQuitting else { return }
+        logger.info("SYSTEM_WILL_SLEEP")
+        isPowerTransitioning = true
+        wakeRecoveryTask?.cancel()
+        speechEngineTask?.cancel()
+        mediaFileTranscriptionTask?.cancel()
+        mediaFileProgressTask?.cancel()
+        realtimeClient.disconnect()
+        realtimeConnected = false
+        speechEngineReady = false
+        if state == .recordingConversation {
+            stopConversationTranscript()
+        } else {
+            cancelDictation()
+        }
+        transition(to: .starting)
+    }
+
+    private func handleSystemDidWake() {
+        guard !isQuitting else { return }
+        logger.info("SYSTEM_DID_WAKE scheduling engine recovery")
+        wakeRecoveryTask?.cancel()
+        wakeRecoveryTask = Task { [weak self] in
+            guard let self else { return }
+            // Let macOS finish restoring audio devices and give a conversation
+            // save a short opportunity to finish before recycling the worker.
+            for _ in 0..<30 {
+                try? await Task.sleep(for: .milliseconds(100))
+                guard !Task.isCancelled else { return }
+                if self.conversationTask == nil { break }
+            }
+            guard !Task.isCancelled else { return }
+            self.wakeRecoveryTask = nil
+            self.scheduleSpeechEngineStart(restart: true)
         }
     }
 
@@ -603,7 +875,8 @@ final class AppCoordinator: ObservableObject {
             do {
                 let fileURL = try await session.start(
                     realtimeURL: realtimeURL,
-                    automaticPunctuation: self.settings.automaticPunctuation
+                    automaticPunctuation: self.settings.automaticPunctuation,
+                    languageCode: self.configuration.recognitionLanguage.rawValue
                 )
                 try Task.checkCancellation()
                 self.conversationTask = nil
@@ -875,13 +1148,303 @@ final class AppCoordinator: ObservableObject {
         }
     }
 
-    private func saveConfiguration(engineURL: URL, modelURL: URL) {
-        configuration = AppConfiguration(engineURL: engineURL, modelURL: modelURL)
+    private func confirmMediaFileTranscription(
+        information: MediaFileInformation,
+        outputURL: URL,
+        estimatedSeconds: TimeInterval
+    ) -> Bool {
+        let mediaKind = information.containsVideo ? "video" : "audio"
+        let size = ByteCountFormatter.string(
+            fromByteCount: information.fileByteCount,
+            countStyle: .file
+        )
+        let alert = NSAlert()
+        alert.messageText = "Transcribe “\(information.fileURL.lastPathComponent)”?"
+        alert.informativeText = """
+        \(information.formatLabel) \(mediaKind) · \(MediaTranscriptDocument.readableDuration(information.duration)) · \(size)
+
+        Estimated time: \(MediaFileTranscriptionEstimator.readableEstimate(estimatedSeconds)). The estimate adapts after completed transcriptions on this Mac.
+
+        Language: \(configuration.recognitionLanguage.title)
+        Save as: \(outputURL.path)
+
+        \(MediaFileTranscriptionService.supportedFormatsDescription)
+
+        Processing stays local. Temporary converted audio is deleted when the job finishes or is canceled.
+        """
+        alert.addButton(withTitle: "Transcribe and Save")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    private func handleMediaFileProgress(_ progress: MediaFileTranscriptionProgress) {
+        guard state == .transcribingFile else { return }
+        switch progress {
+        case .decoding(let fraction):
+            mediaFileProgress = min(0.18, max(0, fraction) * 0.18)
+            mediaFileStatusText = "Preparing audio…"
+            let percent = Int(mediaFileProgress * 100)
+            if percent >= lastMediaFileMenuPercent + 5 {
+                lastMediaFileMenuPercent = percent
+                menuBarController?.refresh()
+            }
+        case .recognizing:
+            mediaFileProgress = max(mediaFileProgress, 0.2)
+            mediaFileStatusText = "Transcribing locally…"
+            beginMediaFileProgressClock()
+        }
+    }
+
+    private func beginMediaFileProgressClock() {
+        mediaFileProgressTask?.cancel()
+        let expected = max(1, mediaFileEstimatedSeconds)
+        mediaFileProgressTask = Task { [weak self] in
+            let startedAt = Date()
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(500))
+                guard !Task.isCancelled, let self, self.state == .transcribingFile else { return }
+                let elapsed = Date().timeIntervalSince(startedAt)
+                self.mediaFileProgress = max(
+                    self.mediaFileProgress,
+                    min(0.95, 0.2 + (0.75 * elapsed / expected))
+                )
+                let percent = Int(self.mediaFileProgress * 100)
+                if percent >= self.lastMediaFileMenuPercent + 2 {
+                    self.lastMediaFileMenuPercent = percent
+                    self.menuBarController?.refresh()
+                }
+            }
+        }
+    }
+
+    private func finishMediaFileTranscription(returnToReady: Bool) {
+        mediaFileProgressTask?.cancel()
+        mediaFileProgressTask = nil
+        mediaFileTranscriptionTask = nil
+        mediaFileName = nil
+        mediaFileStatusText = ""
+        mediaFileEstimatedSeconds = 0
+        lastMediaFileMenuPercent = -1
+        if returnToReady {
+            if serverManager.isRunning && realtimeConnected {
+                transition(
+                    to: permissionStatus.allGranted && globalShortcutOperational
+                        ? .ready
+                        : .permissionRequired
+                )
+            } else if case .serverUnavailable = state {
+                menuBarController?.refresh()
+            } else {
+                transition(to: .serverUnavailable("The local speech engine is not connected."))
+            }
+        } else {
+            menuBarController?.refresh()
+        }
+    }
+
+    private func saveConfiguration(
+        engineURL: URL,
+        modelURL: URL,
+        recognitionLanguage: RecognitionLanguage
+    ) {
+        configuration = AppConfiguration(
+            engineURL: engineURL,
+            modelURL: modelURL,
+            recognitionLanguage: recognitionLanguage
+        )
         configuration.persist()
         if let issue = configuration.validate() {
             transition(to: .configurationRequired(issue))
+        } else if serverManager.isRunning {
+            restartSpeechEngine()
         } else {
-            transition(to: .starting)
+            scheduleSpeechEngineStart(restart: false)
+        }
+    }
+
+    private func scheduleSpeechEngineStart(restart: Bool) {
+        guard !isQuitting else { return }
+        let previousTask = speechEngineTask
+        previousTask?.cancel()
+        let operationID = UUID()
+        speechEngineOperationID = operationID
+        speechEngineTask = Task { [weak self] in
+            if let previousTask { await previousTask.value }
+            guard !Task.isCancelled, let self, !self.isQuitting,
+                  self.speechEngineOperationID == operationID else { return }
+
+            self.configuration = AppConfiguration()
+            if let issue = self.configuration.validate() {
+                self.isPowerTransitioning = false
+                self.transition(to: .configurationRequired(issue))
+                self.showSetup()
+                self.finishSpeechEngineOperation(operationID)
+                return
+            }
+
+            do {
+                if restart || self.serverManager.isRunning {
+                    try await self.serverManager.restart(configuration: self.configuration)
+                } else {
+                    try await self.serverManager.start(configuration: self.configuration)
+                }
+                try Task.checkCancellation()
+                guard self.speechEngineOperationID == operationID, !self.isQuitting else { return }
+                self.isPowerTransitioning = false
+                self.prepareRealtimeConnection()
+            } catch is CancellationError {
+                // A newer operation, sleep transition, or quit owns recovery.
+            } catch {
+                guard self.speechEngineOperationID == operationID, !self.isQuitting else { return }
+                self.isPowerTransitioning = false
+                self.speechEngineReady = false
+                self.transition(to: .serverUnavailable(error.localizedDescription))
+            }
+            self.finishSpeechEngineOperation(operationID)
+        }
+    }
+
+    private func finishSpeechEngineOperation(_ operationID: UUID) {
+        guard speechEngineOperationID == operationID else { return }
+        speechEngineOperationID = nil
+        speechEngineTask = nil
+    }
+
+    private func beginModelDownload(_ specification: SpeechModelDownloadSpecification) {
+        guard canEditSpeechConfiguration, !modelDownloadState.isDownloading else { return }
+        guard confirmModelDownload(specification) else { return }
+
+        modelDownloadState = .downloading(
+            specification: specification,
+            receivedBytes: 0,
+            totalBytes: specification.expectedBytes
+        )
+        lastModelDownloadMenuPercent = 0
+        menuBarController?.refresh()
+        modelDownloadTask?.cancel()
+        modelDownloadTask = Task { [weak self] in
+            guard let self else { return }
+            var stagedURLToClean: URL?
+            do {
+                let destinationURL = specification.destinationURL
+                let fileManager = FileManager.default
+                let alreadyDownloaded = fileManager.fileExists(atPath: destinationURL.path)
+                if alreadyDownloaded {
+                    do {
+                        try await Task.detached {
+                            try ModelDownloader.verifyModel(
+                                at: destinationURL,
+                                specification: specification
+                            )
+                        }.value
+                        try Task.checkCancellation()
+                        completeModelDownload(specification, fileURL: destinationURL)
+                        return
+                    } catch is CancellationError {
+                        throw CancellationError()
+                    } catch {
+                        // The exact managed destination is corrupt or stale.
+                        // Remove it only after verification fails, then replace
+                        // it with a newly downloaded and verified file.
+                        try fileManager.removeItem(at: destinationURL)
+                    }
+                }
+
+                let stagedURL = try await modelDownloader.download(specification) { [weak self] received, reportedTotal in
+                    Task { @MainActor [weak self] in
+                        guard let self,
+                              case .downloading(let activeSpecification, _, _) = self.modelDownloadState,
+                              activeSpecification == specification else { return }
+                        let effectiveTotal = reportedTotal > 0
+                            ? reportedTotal
+                            : specification.expectedBytes
+                        self.modelDownloadState = .downloading(
+                            specification: specification,
+                            receivedBytes: received,
+                            totalBytes: effectiveTotal
+                        )
+                        let percent = effectiveTotal > 0
+                            ? min(100, Int((Double(received) / Double(effectiveTotal)) * 100))
+                            : 0
+                        if percent == 100 || percent >= self.lastModelDownloadMenuPercent + 5 {
+                            self.lastModelDownloadMenuPercent = percent
+                            self.menuBarController?.refresh()
+                        }
+                    }
+                }
+                stagedURLToClean = stagedURL
+                try Task.checkCancellation()
+                let installedURL = try await Task.detached {
+                    try ModelDownloader.installVerifiedModel(
+                        from: stagedURL,
+                        specification: specification
+                    )
+                }.value
+                stagedURLToClean = nil
+                try Task.checkCancellation()
+                completeModelDownload(specification, fileURL: installedURL)
+            } catch is CancellationError {
+                if let stagedURLToClean { try? FileManager.default.removeItem(at: stagedURLToClean) }
+                modelDownloadState = .idle
+                modelDownloadTask = nil
+                menuBarController?.refresh()
+            } catch {
+                if let stagedURLToClean { try? FileManager.default.removeItem(at: stagedURLToClean) }
+                if (error as NSError).code == NSURLErrorCancelled {
+                    modelDownloadState = .idle
+                } else {
+                    modelDownloadState = .failed(
+                        specification: specification,
+                        message: error.localizedDescription
+                    )
+                }
+                modelDownloadTask = nil
+                menuBarController?.refresh()
+            }
+        }
+    }
+
+    private func completeModelDownload(
+        _ specification: SpeechModelDownloadSpecification,
+        fileURL: URL
+    ) {
+        modelDownloadState = .completed(specification: specification, fileURL: fileURL)
+        modelDownloadTask = nil
+        lastModelDownloadMenuPercent = 100
+        menuBarController?.refresh()
+        guard canEditSpeechConfiguration else {
+            pendingDownloadedModel = (specification, fileURL)
+            return
+        }
+        activateDownloadedModel(specification, fileURL: fileURL)
+    }
+
+    private func activateDownloadedModel(
+        _ specification: SpeechModelDownloadSpecification,
+        fileURL: URL
+    ) {
+        saveConfiguration(
+            engineURL: configuration.engineURL,
+            modelURL: fileURL,
+            recognitionLanguage: specification.variant.recommendedLanguage
+        )
+    }
+
+    private func confirmModelDownload(_ specification: SpeechModelDownloadSpecification) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "Download \(specification.title)?"
+        alert.informativeText = "The model is licensed separately from Local Dictation. Review its linked terms before downloading. The verified model will be stored at:\n\n\(specification.destinationURL.path)"
+        alert.addButton(withTitle: "Download and Use")
+        alert.addButton(withTitle: "View License")
+        alert.addButton(withTitle: "Cancel")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            return true
+        case .alertSecondButtonReturn:
+            NSWorkspace.shared.open(specification.licenseURL)
+            return false
+        default:
+            return false
         }
     }
 
@@ -896,5 +1459,14 @@ final class AppCoordinator: ObservableObject {
             || newState == .recordingConversation
             || newState == .savingConversation
         menuBarController?.refresh()
+        if newState == .ready, let pendingDownloadedModel {
+            self.pendingDownloadedModel = nil
+            Task { @MainActor [weak self] in
+                self?.activateDownloadedModel(
+                    pendingDownloadedModel.0,
+                    fileURL: pendingDownloadedModel.1
+                )
+            }
+        }
     }
 }

@@ -30,6 +30,10 @@ struct SpeechServerLaunchPlan: Equatable, Sendable {
     var realtimeURL: URL {
         URL(string: "ws://\(host):\(port)/v1/realtime")!
     }
+
+    var fileTranscriptionURL: URL {
+        URL(string: "http://\(host):\(port)/v1/audio/transcriptions")!
+    }
 }
 
 enum SpeechServerError: LocalizedError {
@@ -60,7 +64,7 @@ final class SpeechServerManager {
     private let session: URLSession
     private var process: Process?
     private var launchPlan: SpeechServerLaunchPlan?
-    private var intentionalStop = false
+    private var intentionallyStoppedProcessIDs: Set<Int32> = []
     private var automaticRestartUsed = false
 
     var onStateChange: StateHandler?
@@ -85,10 +89,13 @@ final class SpeechServerManager {
         launchPlan?.realtimeURL
     }
 
+    var fileTranscriptionURL: URL? {
+        launchPlan?.fileTranscriptionURL
+    }
+
     func start(configuration: AppConfiguration, port: Int? = nil) async throws {
         guard !isRunning else { throw SpeechServerError.alreadyRunning }
 
-        intentionalStop = false
         onStateChange?(.loadingModel)
         let selectedPort = port ?? Self.availablePort(in: 17_866...17_885)
         let plan = SpeechServerLaunchPlan(
@@ -108,8 +115,12 @@ final class SpeechServerManager {
         ]) { _, appValue in appValue }
 
         child.terminationHandler = { [weak self] terminated in
+            let processIdentifier = terminated.processIdentifier
             Task { @MainActor in
-                self?.handleTermination(status: terminated.terminationStatus)
+                self?.handleTermination(
+                    processIdentifier: processIdentifier,
+                    status: terminated.terminationStatus
+                )
             }
         }
 
@@ -129,6 +140,11 @@ final class SpeechServerManager {
             automaticRestartUsed = false
             onStateChange?(.ready)
             logger.info("SPEECH_SERVER_READY pid=\(child.processIdentifier, privacy: .public)")
+        } catch is CancellationError {
+            // A startup superseded by wake recovery, model selection, or app
+            // termination must not leave a loader process behind.
+            forceStop()
+            throw CancellationError()
         } catch {
             await stop()
             onStateChange?(.serverUnavailable(error.localizedDescription))
@@ -143,22 +159,39 @@ final class SpeechServerManager {
 
     func stop(graceNanoseconds: UInt64 = 2_000_000_000) async {
         guard let child = process else { return }
-        intentionalStop = true
+        let processIdentifier = child.processIdentifier
+        intentionallyStoppedProcessIDs.insert(processIdentifier)
         if child.isRunning {
             child.terminate()
             let deadline = ContinuousClock.now + .nanoseconds(Int64(graceNanoseconds))
             while child.isRunning && ContinuousClock.now < deadline {
-                try? await Task.sleep(for: .milliseconds(50))
+                await Self.nonCancellablePause(milliseconds: 50)
             }
             if child.isRunning {
-                logger.warning("SPEECH_SERVER_FORCE_TERMINATE pid=\(child.processIdentifier, privacy: .public)")
-                Darwin.kill(child.processIdentifier, SIGKILL)
+                logger.warning("SPEECH_SERVER_FORCE_TERMINATE pid=\(processIdentifier, privacy: .public)")
+                Darwin.kill(processIdentifier, SIGKILL)
                 for _ in 0..<20 where child.isRunning {
-                    try? await Task.sleep(for: .milliseconds(25))
+                    await Self.nonCancellablePause(milliseconds: 25)
                 }
             }
         }
         logger.info("SPEECH_SERVER_STOPPED")
+        if process?.processIdentifier == processIdentifier {
+            process = nil
+            launchPlan = nil
+        }
+    }
+
+    /// Immediately ends the owned worker. This is the last-resort path used
+    /// by app termination and prevents a stalled child from trapping the UI.
+    func forceStop() {
+        guard let child = process else { return }
+        let processIdentifier = child.processIdentifier
+        intentionallyStoppedProcessIDs.insert(processIdentifier)
+        if child.isRunning {
+            logger.warning("SPEECH_SERVER_IMMEDIATE_TERMINATE pid=\(processIdentifier, privacy: .public)")
+            Darwin.kill(processIdentifier, SIGKILL)
+        }
         process = nil
         launchPlan = nil
     }
@@ -184,13 +217,25 @@ final class SpeechServerManager {
         throw SpeechServerError.readinessTimedOut
     }
 
-    private func handleTermination(status: Int32) {
-        let wasIntentional = intentionalStop
+    private func handleTermination(processIdentifier: Int32, status: Int32) {
+        let wasIntentional = intentionallyStoppedProcessIDs.remove(processIdentifier) != nil
+        // A delayed callback from an old worker must never clear a newer one.
+        guard process?.processIdentifier == processIdentifier else { return }
         process = nil
         launchPlan = nil
         guard !wasIntentional else { return }
         logger.error("SPEECH_SERVER_UNEXPECTED_EXIT code=\(status, privacy: .public)")
         onStateChange?(.serverUnavailable("Speech engine stopped unexpectedly (code \(status))."))
+    }
+
+    private static func nonCancellablePause(milliseconds: Int) async {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .utility).asyncAfter(
+                deadline: .now() + .milliseconds(milliseconds)
+            ) {
+                continuation.resume()
+            }
+        }
     }
 
     static func availablePort(in range: ClosedRange<Int>) -> Int {

@@ -1,6 +1,6 @@
 # Bundled component record
 
-This record describes the locally produced 0.3.7 development installer. A
+This record describes the locally produced 0.3.11 development installer. A
 release pipeline must regenerate and verify it against the signed binaries.
 
 | Component | Version / revision | License | Source |
@@ -10,9 +10,10 @@ release pipeline must regenerate and verify it against the signed binaries.
 | Google SentencePiece | 0.2.2 | Apache-2.0 | https://github.com/google/sentencepiece |
 | Google Abseil C++ | 20260107.1 | Apache-2.0 | https://github.com/abseil/abseil-cpp |
 
-The NVIDIA Nemotron GGUF model is explicitly excluded from the app bundle and
-this bundled-component table. It is obtained separately under the NVIDIA Open
-Model License Agreement.
+Both supported NVIDIA Nemotron GGUF models are explicitly excluded from the app
+bundle and this bundled-component table. Each is obtained separately under the
+distinct terms identified by its model card: NVIDIA Open Model License for the
+English model and OpenMDW 1.1 for the multilingual model.
 
 `scripts/generate-dmg.sh` pins the NeMo-Speech.cpp revision above by default so
 locally generated installers do not silently change when upstream `main`

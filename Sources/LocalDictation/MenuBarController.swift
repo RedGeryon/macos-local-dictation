@@ -33,8 +33,27 @@ final class MenuBarController: NSObject {
         menu.addItem(title)
 
         let status = NSMenuItem(title: "\(statusGlyph(for: coordinator.state))  \(coordinator.state.label)", action: nil, keyEquivalent: "")
+        status.attributedTitle = NSAttributedString(
+            string: "\(statusGlyph(for: coordinator.state))  \(coordinator.state.label)",
+            attributes: [
+                .foregroundColor: menuStatusColor(for: coordinator.state),
+                .font: NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .medium)
+            ]
+        )
         status.isEnabled = false
         menu.addItem(status)
+        if case .downloading(let specification, let receivedBytes, let totalBytes) = coordinator.modelDownloadState {
+            let percent = totalBytes > 0
+                ? min(100, Int((Double(receivedBytes) / Double(totalBytes)) * 100))
+                : 0
+            let download = NSMenuItem(
+                title: "↓  Downloading \(specification.title) · \(percent)%",
+                action: nil,
+                keyEquivalent: ""
+            )
+            download.isEnabled = false
+            menu.addItem(download)
+        }
         menu.addItem(.separator())
 
         switch coordinator.state {
@@ -43,9 +62,14 @@ final class MenuBarController: NSObject {
             menu.addItem(item("Why installation is required…", #selector(showSetup)))
         case .configurationRequired:
             menu.addItem(item("Finish Setup…", #selector(showSetup)))
-            menu.addItem(item("Open Official Model Page", #selector(openModelPage)))
+            menu.addItem(item("Open Selected Model Page", #selector(openModelPage)))
         case .permissionRequired:
             menu.addItem(item("Finish Setup…", #selector(showSetup)))
+            if coordinator.canTranscribeMediaFile {
+                menu.addItem(.separator())
+                menu.addItem(item("Transcribe Audio or Video File…", #selector(transcribeMediaFile)))
+                menu.addItem(fileTranscriptsMenu(coordinator: coordinator))
+            }
         case .serverUnavailable:
             menu.addItem(item("Restart Speech Engine", #selector(restartEngine)))
             menu.addItem(item("Check Setup…", #selector(showSetup)))
@@ -57,6 +81,9 @@ final class MenuBarController: NSObject {
             let hint = NSMenuItem(title: coordinator.settings.shortcut.title + " for Quick Dictation", action: nil, keyEquivalent: "")
             hint.isEnabled = false
             menu.addItem(hint)
+            menu.addItem(item("Transcribe Audio or Video File…", #selector(transcribeMediaFile)))
+            menu.addItem(fileTranscriptsMenu(coordinator: coordinator))
+            menu.addItem(.separator())
             menu.addItem(item(
                 "Start Conversation Transcript",
                 #selector(toggleConversation),
@@ -69,6 +96,32 @@ final class MenuBarController: NSObject {
             if coordinator.lastTranscript != nil {
                 menu.addItem(item("Paste Last Quick Dictation", #selector(pasteLast)))
             }
+        case .inspectingMedia:
+            let reading = NSMenuItem(
+                title: coordinator.mediaFileStatusText.isEmpty
+                    ? "Reading media file…"
+                    : coordinator.mediaFileStatusText,
+                action: nil,
+                keyEquivalent: ""
+            )
+            reading.isEnabled = false
+            menu.addItem(reading)
+            menu.addItem(item("Cancel File Transcription", #selector(cancelMediaFileTranscription)))
+        case .transcribingFile:
+            let percent = min(99, max(0, Int(coordinator.mediaFileProgress * 100)))
+            let progress = NSMenuItem(
+                title: "\(coordinator.mediaFileStatusText) · \(percent)%",
+                action: nil,
+                keyEquivalent: ""
+            )
+            progress.isEnabled = false
+            menu.addItem(progress)
+            if let name = coordinator.mediaFileName {
+                let source = NSMenuItem(title: name, action: nil, keyEquivalent: "")
+                source.isEnabled = false
+                menu.addItem(source)
+            }
+            menu.addItem(item("Cancel File Transcription", #selector(cancelMediaFileTranscription)))
         case .recording(.handsFree):
             menu.addItem(item("Stop Long Dictation and Insert", #selector(toggleHandsFree)))
             menu.addItem(item("Cancel Dictation", #selector(cancelDictation)))
@@ -155,6 +208,21 @@ final class MenuBarController: NSObject {
         return parent
     }
 
+    private func fileTranscriptsMenu(coordinator: AppCoordinator) -> NSMenuItem {
+        let parent = NSMenuItem(title: "File Transcripts", action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+        if coordinator.lastFileTranscriptURL != nil {
+            submenu.addItem(item("Open Last File Transcript", #selector(openLastFileTranscript)))
+        }
+        submenu.addItem(item("Open File Transcripts Folder", #selector(openFileTranscriptsFolder)))
+        let formats = NSMenuItem(title: "WAV, MP3, M4A, AAC, CAF, AIFF, FLAC, MP4, M4V, MOV", action: nil, keyEquivalent: "")
+        formats.isEnabled = false
+        submenu.addItem(.separator())
+        submenu.addItem(formats)
+        parent.submenu = submenu
+        return parent
+    }
+
     private func settingsMenu(coordinator: AppCoordinator) -> NSMenuItem {
         let parent = NSMenuItem(title: "Quick Dictation Settings", action: nil, keyEquivalent: "")
         let submenu = NSMenu()
@@ -183,8 +251,8 @@ final class MenuBarController: NSObject {
         let parent = NSMenuItem(title: "Help & Maintenance", action: nil, keyEquivalent: "")
         let submenu = NSMenu()
         submenu.addItem(item("Open Local Test Playground", #selector(openPlayground)))
-        submenu.addItem(item("Official Model Page", #selector(openModelPage)))
-        submenu.addItem(item("Model License", #selector(openModelLicense)))
+        submenu.addItem(item("Selected Model Page", #selector(openModelPage)))
+        submenu.addItem(item("Selected Model License", #selector(openModelLicense)))
         submenu.addItem(.separator())
         submenu.addItem(item("How to Remove…", #selector(showRemovalInstructions)))
         parent.submenu = submenu
@@ -223,6 +291,7 @@ final class MenuBarController: NSObject {
     private func updateStatusButton(coordinator: AppCoordinator) {
         guard let button = statusItem.button else { return }
         button.toolTip = "Local Dictation — \(coordinator.state.label)"
+        button.contentTintColor = menuStatusColor(for: coordinator.state)
 
         if coordinator.state == .ready,
            let until = savedIndicatorUntil,
@@ -246,6 +315,10 @@ final class MenuBarController: NSObject {
                 coordinator.conversationRestartQueued ? " Saving → REC" : " Saving…",
                 color: .secondaryLabelColor
             )
+        case .transcribingFile:
+            let percent = min(99, max(0, Int(coordinator.mediaFileProgress * 100)))
+            setStatusTitle(" \(percent)%", color: .systemBlue)
+            button.toolTip = "Transcribing \(coordinator.mediaFileName ?? "media file") locally"
         default:
             statusItem.length = NSStatusItem.squareLength
             button.imagePosition = .imageOnly
@@ -263,6 +336,12 @@ final class MenuBarController: NSObject {
         )
         if let marker = title.range(of: "●") ?? title.range(of: "✓") {
             attributed.addAttribute(.foregroundColor, value: color, range: NSRange(marker, in: title))
+        } else {
+            attributed.addAttribute(
+                .foregroundColor,
+                value: color,
+                range: NSRange(location: 0, length: attributed.length)
+            )
         }
         button.attributedTitle = attributed
     }
@@ -270,10 +349,27 @@ final class MenuBarController: NSObject {
     private func statusGlyph(for state: AppState) -> String {
         switch state {
         case .ready: return "●"
-        case .recording, .recordingConversation: return "●"
+        case .recording, .recordingConversation, .transcribingFile: return "●"
         case .installationRequired, .configurationRequired, .permissionRequired: return "◐"
         case .serverUnavailable, .error: return "!"
         default: return "◌"
+        }
+    }
+
+    private func menuStatusColor(for state: AppState) -> NSColor {
+        switch state {
+        case .ready:
+            return .systemGreen
+        case .recording, .recordingConversation:
+            return .systemRed
+        case .transcribingFile:
+            return .systemBlue
+        case .installationRequired, .configurationRequired, .permissionRequired:
+            return .systemOrange
+        case .serverUnavailable, .error:
+            return .systemRed
+        default:
+            return .secondaryLabelColor
         }
     }
 
@@ -285,6 +381,10 @@ final class MenuBarController: NSObject {
     @objc private func restartEngine() { coordinator?.restartSpeechEngine() }
     @objc private func toggleHandsFree() { coordinator?.startOrStopHandsFree() }
     @objc private func toggleConversation() { coordinator?.startOrStopConversationTranscript() }
+    @objc private func transcribeMediaFile() { coordinator?.chooseMediaFileForTranscription() }
+    @objc private func cancelMediaFileTranscription() { coordinator?.cancelMediaFileTranscription() }
+    @objc private func openLastFileTranscript() { coordinator?.openLastFileTranscript() }
+    @objc private func openFileTranscriptsFolder() { coordinator?.openFileTranscriptsFolder() }
     @objc private func pasteLast() { coordinator?.pasteLast() }
     @objc private func cancelDictation() { coordinator?.cancelDictationFromMenu() }
     @objc private func dismissError() { coordinator?.dismissError() }
