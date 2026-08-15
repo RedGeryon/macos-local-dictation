@@ -35,6 +35,8 @@ enum AppState: Equatable, Sendable {
     case startingConversation
     case recordingConversation
     case savingConversation
+    case inspectingMedia
+    case transcribingFile
     case finalizing
     case inserting
     case canceling
@@ -54,6 +56,8 @@ enum AppState: Equatable, Sendable {
         case .startingConversation: return "Starting conversation…"
         case .recordingConversation: return "Recording conversation"
         case .savingConversation: return "Saving conversation…"
+        case .inspectingMedia: return "Reading media file…"
+        case .transcribingFile: return "Transcribing file…"
         case .finalizing: return "Finishing transcription…"
         case .inserting: return "Inserting text…"
         case .canceling: return "Canceling…"
@@ -68,6 +72,7 @@ enum AppState: Equatable, Sendable {
         case .ready: return "checkmark.circle.fill"
         case .recording, .recordingConversation: return "waveform.circle.fill"
         case .loadingModel, .starting, .startingConversation, .savingConversation,
+             .inspectingMedia, .transcribingFile,
              .finalizing, .inserting, .canceling:
             return "arrow.triangle.2.circlepath.circle.fill"
         case .installationRequired, .configurationRequired, .permissionRequired:

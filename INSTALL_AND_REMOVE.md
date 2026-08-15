@@ -10,7 +10,7 @@ bash scripts/generate-dmg.sh
 
 The first run builds NeMo-Speech.cpp locally; subsequent runs reuse it. The
 finished installer is written to
-`dist/Local-Dictation-0.3.7-macOS-arm64.dmg`. Model weights are never bundled.
+`dist/Local-Dictation-0.3.11-macOS-arm64.dmg`. Model weights are never bundled.
 
 ## Install
 
@@ -21,9 +21,14 @@ finished installer is written to
    and notarized.
    If you accidentally open the app from the DMG, it offers to copy itself to
    Applications and relaunch before requesting privacy access.
-4. Download the model from the official
-   [Hugging Face model page](https://huggingface.co/nvidia/nemotron-speech-streaming-en-0.6b),
-   read the NVIDIA model license, and choose the Q8 GGUF in setup.
+4. Initial setup asks you to choose either the
+   [English model](https://huggingface.co/nvidia/nemotron-speech-streaming-en-0.6b)
+   or the [multilingual model](https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b),
+   and review that model's linked terms. Setup displays progress and the save
+   location, verifies the completed file, selects it, and starts the engine.
+   An existing valid model selection is reused automatically.
+   The multilingual option includes Spanish and offers Auto Detect or an
+   explicit locale. The two models have different licenses.
 5. Open **Settings…** and approve Microphone and Accessibility one row at a
    time. Input Monitoring is not required. Accessibility covers both the global
    shortcut and text insertion. The app does not launch the next privacy
@@ -35,6 +40,11 @@ finished installer is written to
    approve the additional **System Audio Recording** request. The app
    captures audio only, not screen video. Press the shortcut again to stop and
    save a new file under Documents → Local Dictation Transcripts.
+7. To transcribe an existing file, choose **Transcribe Audio or Video File…**.
+   Review the detected duration, format, selected language, save location, and
+   estimated time before confirming. WAV, MP3, M4A/ALAC, AAC, CAF, AIFF, FLAC,
+   MP4, M4V, and MOV are supported up to four hours. Results are saved under
+   Documents → Local Dictation Transcripts → File Transcripts.
 
 macOS does not allow an app to turn these switches on for you. If a check stays
 gray after you enabled it, make sure the listed item is the copy in
@@ -43,7 +53,7 @@ that row. Ad-hoc development builds have a new security identity after some
 rebuilds and can require approval again; Developer ID signing prevents that in
 public updates. Development builds produced by this repository use a stable
 bundle-identifier requirement so approvals persist across subsequent local
-rebuilds after one final approval of the 0.3.7 build.
+rebuilds after one final approval of the 0.3.11 build.
 
 For stale entries left by an older ad-hoc build or a copy launched from the
 DMG, choose **Repair Stale Permission Registration…**. After confirmation, the
@@ -51,7 +61,8 @@ app resets only its own relevant records, relaunches from Applications, and star
 the request sequence again.
 
 The Apache-2.0 NeMo-Speech.cpp runtime is included in the app bundle. NVIDIA
-model weights are not included.
+model weights are not included. If both models are downloaded, removing local
+data removes both files from Local Dictation's Models folder.
 
 ## Remove
 
@@ -69,6 +80,6 @@ The script moves the application and support directory to the Trash. macOS may
 retain privacy permission entries; these can be removed manually from System
 Settings → Privacy & Security if desired.
 
-Saved conversation text files are user documents and are intentionally not
-removed with the model or app. Delete `~/Documents/Local Dictation Transcripts`
-separately if you no longer want them.
+Saved conversation and media-file text files are user documents and are
+intentionally not removed with the model or app. Delete
+`~/Documents/Local Dictation Transcripts` separately if you no longer want them.

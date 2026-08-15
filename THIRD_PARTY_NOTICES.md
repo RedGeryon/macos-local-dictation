@@ -32,3 +32,14 @@ versions in the software bill of materials.
 
 The model is downloaded separately by the user, is not present in this
 repository or DMG, and is not covered by this application's MIT License.
+
+## NVIDIA Nemotron 3.5 ASR Streaming Multilingual 0.6B
+
+- Model card and download:
+  https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b
+- Governing terms identified by the model card:
+  https://openmdw.ai/license/1-1/
+
+The model is downloaded separately by the user, is not present in this
+repository or DMG, and is not covered by this application's MIT License. Its
+OpenMDW 1.1 terms are distinct from the English model's license.

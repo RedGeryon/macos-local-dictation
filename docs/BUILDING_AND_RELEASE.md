@@ -29,6 +29,16 @@ are described in [CURRENT_STATUS.md](CURRENT_STATUS.md) and can be run with:
 bash scripts/test-real-engine.sh
 ```
 
+After separately downloading the multilingual model, validate its explicit
+Spanish prompt and final-audio commit with:
+
+```bash
+bash scripts/test-multilingual-model.sh
+```
+
+This creates and removes a temporary macOS Spanish speech fixture; neither the
+fixture nor model weights belong in the repository.
+
 ## Generate a development DMG
 
 Run:
@@ -46,10 +56,10 @@ On its first run, the generator:
 4. Builds the Metal runtime.
 5. Builds and ad-hoc signs `Local Dictation.app`.
 6. Bundles the runtime and required third-party notices.
-7. Creates `dist/Local-Dictation-0.3.7-macOS-arm64.dmg`.
+7. Creates `dist/Local-Dictation-0.3.11-macOS-arm64.dmg`.
 
-The generated app and DMG are ignored by Git. The NVIDIA model is never placed
-in either artifact. Later runs reuse the runtime under
+The generated app and DMG are ignored by Git. NVIDIA model weights are never
+placed in either artifact. Later runs reuse the runtime under
 `~/Library/Application Support/LocalDictation`.
 
 To use a compatible runtime from another location:
@@ -63,12 +73,13 @@ LOCAL_DICTATION_BUNDLE_ENGINE_DIR=/absolute/path/to/runtime \
 
 ```bash
 codesign --verify --deep --strict "build/Local Dictation.app"
-hdiutil verify "dist/Local-Dictation-0.3.7-macOS-arm64.dmg"
+hdiutil verify "dist/Local-Dictation-0.3.11-macOS-arm64.dmg"
 ```
 
 Mount the DMG, drag the app to `/Applications`, confirm the model is still
 requested separately, and exercise the permission, quick-dictation,
-conversation, AirPods-route, Stop, and uninstall flows from the installed copy.
+conversation, AirPods-route, file-transcription estimate/cancel/output, Stop,
+and uninstall flows from the installed copy.
 
 ## Public release requirements
 

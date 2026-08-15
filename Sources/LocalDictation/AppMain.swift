@@ -27,6 +27,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if coordinator?.terminationInProgress == true {
+            return .terminateNow
+        }
         guard coordinator?.serverManager.isRunning == true else {
             return .terminateNow
         }

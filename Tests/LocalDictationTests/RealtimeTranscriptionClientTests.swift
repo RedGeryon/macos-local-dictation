@@ -2,6 +2,22 @@ import XCTest
 @testable import LocalDictation
 
 final class RealtimeTranscriptionClientTests: XCTestCase {
+    func testSessionUpdateCarriesSelectedSpanishLocale() throws {
+        let message = RealtimeTranscriptionClient.sessionUpdateMessage(
+            automaticPunctuation: true,
+            languageCode: RecognitionLanguage.spanishSpain.rawValue,
+            wordTimestamps: true,
+            endpointingMilliseconds: 800
+        )
+        let session = try XCTUnwrap(message["session"] as? [String: Any])
+
+        XCTAssertEqual(message["type"] as? String, "session.update")
+        XCTAssertEqual(session["language"] as? String, "es-ES")
+        XCTAssertEqual(session["sample_rate"] as? Int, 16_000)
+        XCTAssertEqual(session["endpointing_ms"] as? Int, 800)
+        XCTAssertEqual(session["word_timestamps"] as? Bool, true)
+    }
+
     func testCompletedEventUsesFirstAndLastWordTimestamps() {
         let segment = RealtimeTranscriptionClient.transcriptSegment(
             from: [

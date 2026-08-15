@@ -62,7 +62,11 @@ final class ConversationTranscriptionSession {
     var onError: ErrorHandler?
     private(set) var transcriptURL: URL?
 
-    func start(realtimeURL: URL, automaticPunctuation: Bool) async throws -> URL {
+    func start(
+        realtimeURL: URL,
+        automaticPunctuation: Bool,
+        languageCode: String
+    ) async throws -> URL {
         configureCallbacks()
         systemAudioCapture.onError = { [weak self] error in
             Task { @MainActor [weak self] in self?.handleError(error) }
@@ -70,12 +74,14 @@ final class ConversationTranscriptionSession {
         microphoneClient.connect(
             to: realtimeURL,
             automaticPunctuation: automaticPunctuation,
+            languageCode: languageCode,
             wordTimestamps: true,
             endpointingMilliseconds: 800
         )
         speakerClient.connect(
             to: realtimeURL,
             automaticPunctuation: automaticPunctuation,
+            languageCode: languageCode,
             wordTimestamps: true,
             endpointingMilliseconds: 800
         )

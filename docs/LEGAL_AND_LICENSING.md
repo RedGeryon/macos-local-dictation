@@ -24,22 +24,28 @@ found, and a public build should generate an SBOM for the exact runtime binary.
 The current development package has a checked-in
 [bundled component record](BUNDLED_COMPONENTS.md).
 
-## Separately downloaded NVIDIA model
+## Separately downloaded NVIDIA models
 
 The application supports the
 [Nemotron Speech Streaming English 0.6B model](https://huggingface.co/nvidia/nemotron-speech-streaming-en-0.6b),
 specifically `nemotron-speech-streaming-en-0.6b.q8_0.gguf`. Its model card names
 the [NVIDIA Open Model License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/)
-as the governing terms.
+as the governing terms. It also supports
+[Nemotron 3.5 ASR Streaming Multilingual 0.6B](https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b),
+specifically `nemotron-3.5-asr-streaming-0.6b.q8_0.gguf`. That model card instead
+identifies the [OpenMDW 1.1 license](https://openmdw.ai/license/1-1/) as its
+governing terms. The two sets of model terms must not be treated as
+interchangeable.
 
 Model weights are not part of the MIT application, are not placed in the DMG,
 and must not be described as MIT licensed. Users obtain the model from NVIDIA's
 Hugging Face repository after reviewing the current terms. The repository's
-download helper requires an explicit license-acceptance flag.
+download helper requires the corresponding explicit license-acceptance flag for
+each selected model.
 
-The current model card describes the model as ready for commercial and
-non-commercial use, but that statement and the live terms must be rechecked at
-release time.
+Any use-case statements in the current model cards and the live terms must be
+rechecked at release time. This repository does not grant rights to either
+model and this document is not legal advice.
 
 ## Marks and release review
 
