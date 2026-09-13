@@ -1,0 +1,4 @@
+# The setup script verifies the mlx-audio 0.5.3 wheel SHA-256 before it installs
+# it. Its resolver installs compatible Apple-Silicon dependencies only into the
+# isolated runtime, then captures `pip freeze` for benchmark reproducibility.
+mlx-audio==0.5.3

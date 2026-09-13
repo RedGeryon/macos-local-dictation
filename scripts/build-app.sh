@@ -7,6 +7,8 @@ contents_dir="$app_dir/Contents"
 support_dir="${LOCAL_DICTATION_SUPPORT_DIR:-$HOME/Library/Application Support/LocalDictation}"
 engine_dir="${LOCAL_DICTATION_BUNDLE_ENGINE_DIR:-$support_dir/Engine}"
 nemo_source_dir="${LOCAL_DICTATION_NEMO_SOURCE_DIR:-$support_dir/Source/NeMo-Speech.cpp}"
+tts_source_dir="$repo_dir/python"
+tts_assets_dir="$contents_dir/Resources/TTSAssets"
 
 bundle_host_dependencies() {
   runtime_root="$1"
@@ -135,6 +137,17 @@ cp "$repo_dir/Resources/Info.plist" "$contents_dir/Info.plist"
 cp "$repo_dir/LICENSE" "$contents_dir/Resources/Licenses/Local-Dictation-MIT.txt"
 cp "$repo_dir/THIRD_PARTY_NOTICES.md" "$contents_dir/Resources/THIRD_PARTY_NOTICES.md"
 cp "$repo_dir/docs/BUNDLED_COMPONENTS.md" "$contents_dir/Resources/BUNDLED_COMPONENTS.md"
+
+if [ -x "$tts_source_dir/run-tts-server.sh" ] && [ -f "$tts_source_dir/tts_worker.py" ]; then
+  ditto "$tts_source_dir" "$contents_dir/Resources/TTSEngine"
+  rm -rf "$contents_dir/Resources/TTSEngine/__pycache__"
+  chmod 755 "$contents_dir/Resources/TTSEngine/run-tts-server.sh"
+  mkdir -p "$tts_assets_dir/scripts" "$tts_assets_dir/python"
+  cp "$repo_dir/python/requirements-tts-lock.txt" "$tts_assets_dir/python/requirements-tts-lock.txt"
+  cp "$repo_dir/scripts/setup-tts-runtime.sh" "$repo_dir/scripts/download-tts-models.sh" "$tts_assets_dir/scripts/"
+  chmod 755 "$tts_assets_dir/scripts/setup-tts-runtime.sh" "$tts_assets_dir/scripts/download-tts-models.sh"
+  echo "Bundled local TTS worker launcher"
+fi
 
 if [ -x "$engine_dir/bin/nemo-speech" ]; then
   ditto "$engine_dir" "$contents_dir/Resources/Engine"

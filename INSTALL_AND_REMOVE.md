@@ -1,85 +1,77 @@
 # Install and remove Local Dictation
 
-## Generate the DMG from source
+## Install or replace
 
-On an Apple Silicon Mac with the Xcode Command Line Tools and Homebrew, run:
+This repository produces an Apple Silicon development build. Create its DMG
+from source with:
 
 ```bash
 bash scripts/generate-dmg.sh
 ```
 
-The first run builds NeMo-Speech.cpp locally; subsequent runs reuse it. The
-finished installer is written to
-`dist/Local-Dictation-0.3.11-macOS-arm64.dmg`. Model weights are never bundled.
+The output is `dist/Local-Dictation-0.4.1-macOS-arm64.dmg`. The first build
+creates the bundled NeMo-Speech.cpp runtime. Model weights are separate from the
+DMG.
 
-## Install
+To install a supplied DMG or replace an earlier copy:
 
-1. Open the DMG.
-2. Drag **Local Dictation** to **Applications**.
-3. Open it from Applications. The first local build is ad-hoc signed, so macOS
-   may require Control-click → Open. Public releases must be Developer ID signed
+1. Quit Local Dictation.
+2. Open the DMG and drag **Local Dictation** to **Applications**. Choose
+   **Replace** if Finder asks.
+3. Open **Local Dictation** from Applications. Do not grant permissions to the
+   copy still on the DMG. Development builds are ad-hoc signed, so macOS may
+   require Control-click → Open. A public release must be Developer ID signed
    and notarized.
-   If you accidentally open the app from the DMG, it offers to copy itself to
-   Applications and relaunch before requesting privacy access.
-4. Initial setup asks you to choose either the
-   [English model](https://huggingface.co/nvidia/nemotron-speech-streaming-en-0.6b)
-   or the [multilingual model](https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b),
-   and review that model's linked terms. Setup displays progress and the save
-   location, verifies the completed file, selects it, and starts the engine.
-   An existing valid model selection is reused automatically.
-   The multilingual option includes Spanish and offers Auto Detect or an
-   explicit locale. The two models have different licenses.
-5. Open **Settings…** and approve Microphone and Accessibility one row at a
-   time. Input Monitoring is not required. Accessibility covers both the global
-   shortcut and text insertion. The app does not launch the next privacy
-   request automatically. Use the adjacent Settings link only when macOS does
-   not show its normal approval surface, then choose Refresh Status.
-   While setup is open, the app temporarily appears in the Dock and Command–Tab,
-   making it easy to return from System Settings.
-6. To use two-sided conversation transcripts, press **Control–Option–C** and
-   approve the additional **System Audio Recording** request. The app
-   captures audio only, not screen video. Press the shortcut again to stop and
-   save a new file under Documents → Local Dictation Transcripts.
-7. To transcribe an existing file, choose **Transcribe Audio or Video File…**.
-   Review the detected duration, format, selected language, save location, and
-   estimated time before confirming. WAV, MP3, M4A/ALAC, AAC, CAF, AIFF, FLAC,
-   MP4, M4V, and MOV are supported up to four hours. Results are saved under
-   Documents → Local Dictation Transcripts → File Transcripts.
+4. Open **Models & Startup**. Enable only the features you want. Each feature
+   has an independent **Load at startup** choice. Each picker lists only models
+   that are already verified locally. Choose **Add Model…** to see available
+   downloads. A download adds a model; **Load now** starts the selected model.
+   Selecting another installed model switches and loads it when that feature is
+   enabled. If the feature is disabled, the choice is saved and remains unloaded
+   until you enable it, then choose **Load now** (or use a saved startup choice
+   on the next launch). This does not alter **Load at startup**.
+   - For Speech to Text, use **Add Model…** to download either **English** or
+     **Multilingual**. The multilingual model supports Spanish, other supported
+     languages, and Auto Detect.
+   - For Text to Speech, use **Add Model…** to download **Qwen 1.7B (BF16)**
+     or **Qwen 1.7B (8-bit)** Preset voices. The app sets up Read Aloud first
+     when needed. If weights are already installed but the runtime is missing,
+     use **Set up Read Aloud** as recovery. BF16 is the initial preference, not
+     an included download.
+     VoiceDesign and Base remain optional downloads for a new persistent custom
+     voice. The 8-bit option is not claimed to match BF16 quality.
+5. On the **Dictation** page, allow Microphone and Accessibility. macOS requires
+   the user to approve each permission. System Audio Recording is requested only
+   when starting a conversation transcript.
 
-macOS does not allow an app to turn these switches on for you. If a check stays
-gray after you enabled it, make sure the listed item is the copy in
-`/Applications`, quit and reopen Local Dictation, then click **Request…** on
-that row. Ad-hoc development builds have a new security identity after some
-rebuilds and can require approval again; Developer ID signing prevents that in
-public updates. Development builds produced by this repository use a stable
-bundle-identifier requirement so approvals persist across subsequent local
-rebuilds after one final approval of the 0.3.11 build.
+Replacing the installed app preserves its saved macOS preferences and leaves its
+Application Support models, Read Aloud runtime, and saved voice references in
+place. A development preview has a separate identity; normal replacement does
+not promise to promote preview-only settings, models, or saved voices.
 
-For stale entries left by an older ad-hoc build or a copy launched from the
-DMG, choose **Repair Stale Permission Registration…**. After confirmation, the
-app resets only its own relevant records, relaunches from Applications, and starts
-the request sequence again.
-
-The Apache-2.0 NeMo-Speech.cpp runtime is included in the app bundle. NVIDIA
-model weights are not included. If both models are downloaded, removing local
-data removes both files from Local Dictation's Models folder.
+```text
+~/Library/Application Support/LocalDictation/
+├── Models/       speech-to-text models
+├── TTSRuntime/   Read Aloud Python environment
+├── TTSModels/    Qwen model snapshots
+└── SavedVoices/  persistent custom-voice references
+```
 
 ## Remove
 
-Open the menu-bar icon and choose **How to Remove…**. Use **Remove Local Data**
-to delete the model, external engine, and settings, then move the application
-from Applications to the Trash.
+Choose **Help → How to Remove… → Remove Local Data…** in Local Dictation, then
+move `/Applications/Local Dictation.app` to the Trash. Local data includes the
+speech and read-aloud models, the Read Aloud runtime, saved voice references,
+and app settings. Exported audio and transcript documents are intentionally not
+removed; delete them separately if needed.
 
-Developers who installed using the repository scripts can instead run:
+Developers can instead run:
 
 ```bash
 bash scripts/uninstall.sh --remove-all
 ```
 
-The script moves the application and support directory to the Trash. macOS may
-retain privacy permission entries; these can be removed manually from System
-Settings → Privacy & Security if desired.
-
-Saved conversation and media-file text files are user documents and are
-intentionally not removed with the model or app. Delete
-`~/Documents/Local Dictation Transcripts` separately if you no longer want them.
+That script moves the app and its Application Support directory to the Trash.
+macOS may retain a privacy entry. Do not reset it merely to replace the app;
+remove it manually in System Settings only when you intentionally want to revoke
+Local Dictation access.

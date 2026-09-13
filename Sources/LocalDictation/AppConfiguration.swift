@@ -1,5 +1,138 @@
 import Foundation
 
+enum LocalDictationPreviewIdentity {
+    static let bundleIdentifier = "org.localdictation.app.tts-preview"
+    static func isPreview(bundleIdentifier: String? = Bundle.main.bundleIdentifier) -> Bool {
+        bundleIdentifier == Self.bundleIdentifier
+    }
+}
+
+enum TextToSpeechStorage {
+    private static let runtimeKey = "previewTTSRuntimeDirectory"
+    private static let modelsKey = "previewTTSModelsDirectory"
+
+    static func runtimeDirectory(environment: [String: String] = ProcessInfo.processInfo.environment, defaults: UserDefaults = .standard, bundleURL: URL = Bundle.main.bundleURL, isPreview: Bool = LocalDictationPreviewIdentity.isPreview()) -> URL {
+        directory(environment["LOCAL_DICTATION_TTS_RUNTIME_DIR"], key: runtimeKey, fallbackName: "tts-runtime", defaults: defaults, bundleURL: bundleURL, isPreview: isPreview)
+    }
+    static func modelsDirectory(environment: [String: String] = ProcessInfo.processInfo.environment, defaults: UserDefaults = .standard, bundleURL: URL = Bundle.main.bundleURL, isPreview: Bool = LocalDictationPreviewIdentity.isPreview()) -> URL {
+        directory(environment["LOCAL_DICTATION_TTS_MODEL_DIR"], key: modelsKey, fallbackName: "tts-models", defaults: defaults, bundleURL: bundleURL, isPreview: isPreview)
+    }
+    static func capturePreviewDirectories(environment: [String: String] = ProcessInfo.processInfo.environment, defaults: UserDefaults = .standard, bundleURL: URL = Bundle.main.bundleURL) {
+        guard LocalDictationPreviewIdentity.isPreview() else { return }
+        for (variable, key) in [("LOCAL_DICTATION_TTS_RUNTIME_DIR", runtimeKey), ("LOCAL_DICTATION_TTS_MODEL_DIR", modelsKey)] {
+            guard let path = environment[variable], URL(fileURLWithPath: path).isFileURL, path.hasPrefix("/") else { continue }
+            defaults.set(path, forKey: key)
+        }
+    }
+    private static func directory(_ environmentPath: String?, key: String, fallbackName: String, defaults: UserDefaults, bundleURL: URL, isPreview: Bool) -> URL {
+        if let environmentPath, environmentPath.hasPrefix("/") { return URL(fileURLWithPath: environmentPath) }
+        if isPreview, let stored = defaults.string(forKey: key), stored.hasPrefix("/") {
+            return URL(fileURLWithPath: stored)
+        }
+        if isPreview { return previewSiblingDirectory(bundleURL: bundleURL, name: fallbackName) }
+        return AppConfiguration.supportDirectory().appendingPathComponent(fallbackName == "tts-runtime" ? "TTSRuntime" : "TTSModels", isDirectory: true)
+    }
+    static func previewSiblingDirectory(bundleURL: URL, name: String) -> URL {
+        bundleURL.deletingLastPathComponent().appendingPathComponent(name, isDirectory: true)
+    }
+}
+
+/// Minutes of inactivity after which a loaded model is released. nil keeps it loaded.
+typealias IdleUnloadMinutes = Int
+
+enum IdleUnloadPolicy {
+    /// The choices offered in Settings, with nil meaning "keep loaded".
+    static let choices: [IdleUnloadMinutes?] = [nil, 5, 15, 30, 60]
+
+    static func title(for minutes: IdleUnloadMinutes?) -> String {
+        guard let minutes else { return "Keep loaded" }
+        return "After \(minutes) minutes idle"
+    }
+
+    /// A model is released only when it is loaded, idle, and nothing is using it.
+    static func shouldSchedule(minutes: IdleUnloadMinutes?, engineReady: Bool, busy: Bool) -> Bool {
+        guard let minutes, minutes > 0 else { return false }
+        return engineReady && !busy
+    }
+}
+
+struct DictationFeatureSettings: Codable, Equatable, Sendable {
+    var enabled: Bool = true
+    var loadAtStartup: Bool = true
+    var idleUnloadMinutes: IdleUnloadMinutes? = nil
+}
+
+enum TextToSpeechModelChoice: String, CaseIterable, Codable, Sendable {
+    case bf16 = "qwen-1.7b-bf16"
+    case eightBit = "qwen-1.7b-8bit"
+}
+
+struct ReadAloudFeatureSettings: Codable, Equatable, Sendable {
+    var enabled: Bool = true
+    var loadAtStartup: Bool = false
+    var model: TextToSpeechModelChoice = .bf16
+    var idleUnloadMinutes: IdleUnloadMinutes? = nil
+}
+
+struct LocalFeatureSettings: Codable, Equatable, Sendable {
+    var dictation = DictationFeatureSettings()
+    var readAloud = ReadAloudFeatureSettings()
+    static let key = "localFeatureSettings"
+    static func load(defaults: UserDefaults = .standard) -> Self {
+        guard let data = defaults.data(forKey: key), let value = try? JSONDecoder().decode(Self.self, from: data) else { return Self() }
+        return value
+    }
+    func persist(defaults: UserDefaults = .standard) { defaults.set(try? JSONEncoder().encode(self), forKey: Self.key) }
+}
+
+struct InstalledSpeechModel: Equatable, Identifiable, Sendable {
+    let url: URL
+    let variant: SpeechModelVariant
+    var id: String { url.standardizedFileURL.path }
+    var title: String { variant.title }
+}
+
+struct ModelCatalogConfiguration {
+    let supportDirectory: URL
+    let ttsModelsDirectory: URL
+    let ttsRuntimeDirectory: URL
+    let defaults: UserDefaults
+    let appConfiguration: AppConfiguration?
+    /// Test-only presentation fixtures can provide a stable lifecycle state
+    /// without starting permissions, hotkeys, or a local worker.
+    let initialState: AppState?
+
+    init(supportDirectory: URL, ttsModelsDirectory: URL, ttsRuntimeDirectory: URL, defaults: UserDefaults, appConfiguration: AppConfiguration? = nil, initialState: AppState? = nil) {
+        self.supportDirectory = supportDirectory; self.ttsModelsDirectory = ttsModelsDirectory
+        self.ttsRuntimeDirectory = ttsRuntimeDirectory; self.defaults = defaults; self.appConfiguration = appConfiguration
+        self.initialState = initialState
+    }
+
+    static func live() -> Self {
+        .init(supportDirectory: AppConfiguration.supportDirectory(), ttsModelsDirectory: TextToSpeechStorage.modelsDirectory(), ttsRuntimeDirectory: TextToSpeechStorage.runtimeDirectory(), defaults: .standard)
+    }
+}
+
+/// The lifecycle of one local engine. This deliberately distinguishes a disabled
+/// engine from an enabled engine which has not been loaded yet.
+enum LocalFeatureRuntimeStatus: Equatable, Sendable {
+    case disabled
+    case notLoaded
+    case loading
+    case ready
+    case error(String)
+
+    var label: String {
+        switch self {
+        case .disabled: return "Disabled"
+        case .notLoaded: return "Not loaded"
+        case .loading: return "Loading…"
+        case .ready: return "Ready"
+        case .error: return "Needs attention"
+        }
+    }
+}
+
 enum SpeechModelVariant: String, Equatable, Sendable {
     case english
     case multilingual
@@ -167,7 +300,14 @@ struct AppConfiguration: Equatable, Sendable {
             .appendingPathComponent("Models", isDirectory: true)
             .appendingPathComponent(Self.modelFileName)
 
+        // The preview has its own bundle identifier and therefore its own
+        // UserDefaults domain. It must still be able to use an existing
+        // production ASR installation when it has no explicit ASR choice.
+        let productionDefaults = LocalDictationPreviewIdentity.isPreview()
+            ? UserDefaults(suiteName: "org.localdictation.app")
+            : nil
         let storedEnginePath = defaults.string(forKey: "enginePath")
+            ?? productionDefaults?.string(forKey: "enginePath")
         let usableStoredEngine = storedEnginePath.flatMap {
             fileManager.isExecutableFile(atPath: $0) ? $0 : nil
         }
@@ -176,13 +316,18 @@ struct AppConfiguration: Equatable, Sendable {
             ?? defaultEngine.path
         let modelPath = environment["LOCAL_DICTATION_MODEL_PATH"]
             ?? defaults.string(forKey: "modelPath")
+            ?? productionDefaults?.string(forKey: "modelPath")
             ?? defaultModel.path
         let modelURL = URL(fileURLWithPath: modelPath)
         let modelVariant = SpeechModelVariant.identify(modelURL)
+        let storedLanguage = defaults.string(forKey: "recognitionLanguage")
+            .flatMap(RecognitionLanguage.init(rawValue:))
+        let previewLanguage = productionDefaults?.string(forKey: "recognitionLanguage")
+            .flatMap(RecognitionLanguage.init(rawValue:))
         let requestedLanguage = environment["LOCAL_DICTATION_LANGUAGE"]
             .flatMap(RecognitionLanguage.init(rawValue:))
-            ?? defaults.string(forKey: "recognitionLanguage")
-                .flatMap(RecognitionLanguage.init(rawValue:))
+            ?? storedLanguage
+            ?? previewLanguage
             ?? modelVariant.recommendedLanguage
 
         self.engineURL = URL(fileURLWithPath: enginePath)
@@ -232,5 +377,31 @@ struct AppConfiguration: Equatable, Sendable {
         }
         defer { try? handle.close() }
         return (try? handle.read(upToCount: 4)) == Data("GGUF".utf8)
+    }
+
+    static func installedSpeechModels(
+        currentModelURL: URL? = nil,
+        defaults: UserDefaults = .standard,
+        supportDirectory: URL? = nil,
+        fileManager: FileManager = .default
+    ) -> [InstalledSpeechModel] {
+        let models = (supportDirectory ?? Self.supportDirectory(fileManager: fileManager)).appendingPathComponent("Models", isDirectory: true)
+        let known = [models.appendingPathComponent(modelFileName), models.appendingPathComponent(multilingualModelFileName)]
+        let remembered = (defaults.array(forKey: "knownSpeechModelPaths") as? [String] ?? []).map(URL.init(fileURLWithPath:))
+        let candidates = known + remembered + (currentModelURL.map { [$0] } ?? [])
+        var seen = Set<String>()
+        return candidates.compactMap { url in
+            let normalized = url.standardizedFileURL
+            guard seen.insert(normalized.path).inserted, isGGUF(normalized) else { return nil }
+            return InstalledSpeechModel(url: normalized, variant: SpeechModelVariant.identify(normalized))
+        }
+    }
+
+    static func rememberSpeechModel(_ url: URL, defaults: UserDefaults = .standard) {
+        let path = url.standardizedFileURL.path
+        var paths = defaults.array(forKey: "knownSpeechModelPaths") as? [String] ?? []
+        paths.removeAll { $0 == path }
+        paths.append(path)
+        defaults.set(Array(paths.suffix(20)), forKey: "knownSpeechModelPaths")
     }
 }

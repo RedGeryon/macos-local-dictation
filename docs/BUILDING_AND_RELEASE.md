@@ -56,7 +56,7 @@ On its first run, the generator:
 4. Builds the Metal runtime.
 5. Builds and ad-hoc signs `Local Dictation.app`.
 6. Bundles the runtime and required third-party notices.
-7. Creates `dist/Local-Dictation-0.3.11-macOS-arm64.dmg`.
+7. Creates `dist/Local-Dictation-0.4.1-macOS-arm64.dmg`.
 
 The generated app and DMG are ignored by Git. NVIDIA model weights are never
 placed in either artifact. Later runs reuse the runtime under
@@ -73,7 +73,7 @@ LOCAL_DICTATION_BUNDLE_ENGINE_DIR=/absolute/path/to/runtime \
 
 ```bash
 codesign --verify --deep --strict "build/Local Dictation.app"
-hdiutil verify "dist/Local-Dictation-0.3.11-macOS-arm64.dmg"
+hdiutil verify "dist/Local-Dictation-0.4.1-macOS-arm64.dmg"
 ```
 
 Mount the DMG, drag the app to `/Applications`, confirm the model is still

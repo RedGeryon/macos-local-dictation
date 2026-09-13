@@ -1,5 +1,55 @@
 # Release notes
 
+## Unreleased — Menu, Settings, and custom shortcuts
+
+- Every shortcut (Quick Dictation, Conversation Transcript, Read Selected Text,
+  Pause or Resume Readback) is now user-configurable from a new Settings ›
+  Shortcuts page, with conflict warnings and a Restore Defaults button. A
+  previously saved Control–Option–Space push-to-talk choice is migrated
+  automatically.
+- The menu bar and the menu-bar icon now show status for Speech to Text and
+  Text to Speech independently, each with its own colored dot (green Ready,
+  gray Not loaded, blue busy, red recording, orange needs attention); clicking
+  a status row opens the Settings page that explains it.
+- The menu-bar menu is reorganized into "Speech to Text" and "Text to Speech"
+  sections with native section headers, replacing the old bold title row; the
+  old "Quick Dictation Settings" submenu is removed (those toggles now live in
+  Settings › Speech to Text), and "Voice Settings…" moved inside the new Voice
+  submenu.
+- The Settings window now uses a consistent layout across all four pages
+  (Speech to Text, Text to Speech, Shortcuts, Models & Startup), each with a
+  page title, description, and titled panels.
+- The Settings window remembers its size and position between openings instead
+  of re-centering every time.
+- Settings, the Text to Speech editor, and the menu-bar menu now refresh when
+  app state changes instead of polling on a timer, so a status such as
+  "Loading…" updates the moment the model is ready.
+- Screen & System Audio Recording shows as allowed as soon as macOS reports the
+  permission, not only after the first conversation transcript.
+- Vivian, a warm female preset voice, is now the second default voice next to
+  Ryan. The designed narrator stays available in the full voice list but is no
+  longer a default, because it needs extra model passes before it can speak.
+- Models & Startup gains a **Memory** choice per feature: keep the model loaded
+  or unload it after 5, 15, 30, or 60 idle minutes. It loads again on the next
+  use.
+- Shortcuts work while a model is unloaded: holding Fn, or pressing the Long
+  Dictation or conversation shortcut, loads the speech model and then starts
+  the requested action automatically. Reading aloud already loaded on demand.
+- Long Dictation has its own shortcut (⌃⌥L by default) so hands-free dictation
+  is reachable from any Quick Dictation trigger, not only Fn+Space.
+- **Open Local Dictation when you log in** is available in Models & Startup for
+  the installed app.
+- The menu keeps the last five dictations of the session under **Recent
+  Dictations**; choosing one inserts it again.
+- The menu-bar icon changes shape with activity: a microphone while listening,
+  a speaker while reading aloud, a document while transcribing a file.
+- Saving a conversation transcript posts a notification; clicking it opens the
+  file.
+- The Text to Speech disclosure inside Settings is now called **More Options**.
+- The speech engine is now guarded by a watchdog: if the app is force-quit or
+  crashes, the engine is stopped within a few seconds instead of lingering in
+  memory. Any engine orphaned by an earlier instance is cleaned up at launch.
+
 ## 0.3.11 — File transcription and multilingual setup
 
 ### New: transcribe existing audio and video

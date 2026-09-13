@@ -1,20 +1,24 @@
 # Current implementation status
 
-Updated August 15, 2026.
+Updated September 12, 2026 for 0.4.1 (build 20).
 
 | Capability | Status |
 |---|---|
-| Native menu-bar app and guided setup | First run asks for a model, then downloads, verifies, selects, and starts it automatically; valid saved paths are reused |
+| Native menu-bar app and guided setup | Unified Speech to Text, Text to Speech, Shortcuts, and Models & Startup pages; each optional feature is enabled, downloaded, loaded, and started independently |
 | Bundled NeMo-Speech.cpp Metal runtime | Implemented; model remains external |
+| Independent Speech to Text and Read Aloud controls | Implemented; enabled state and startup loading persist separately |
+| Local Read Aloud | Qwen 1.7B BF16 or 8-bit, local MLX worker, selected-text readback, clipboard readback, and RF64 export |
+| Read Aloud setup and model lifecycle | In-app runtime and component downloads, explicit load/unload, parent-watchdog cleanup, and native installed-app validation |
+| Saved Read Aloud voices | Ryan default, Designed Narrator, and custom local references; saved voice settings persist locally |
 | Model validation, launch, readiness, restart, and shutdown | Implemented and real-process tested |
 | English + multilingual model selection | Implemented; official Q8 downloads and distinct terms linked in setup |
-| Managed in-app model downloads | Visible progress, fixed location, cancel/retry, pinned size/SHA-256/GGUF verification, automatic selection |
+| Managed in-app model downloads | Installed-only pickers, shared Add Model catalogs, visible progress, fixed location, cancel/retry, pinned checks, explicit load controls, and enabled-feature model switching |
 | Model/language clarity | Ready is green; English-only model exposes English only; multilingual model exposes Auto Detect and locale choices |
 | Spanish and multilingual language prompts | Auto Detect plus 32 out-of-box locales passed to all recognition streams |
 | Native microphone capture and 16 kHz PCM16 conversion | Implemented |
 | Release-tail capture and ordered final-audio commit | Implemented and final-word tested |
 | Persistent stateful realtime WebSocket | Implemented and real-audio tested |
-| Fn and Control–Option–Space push-to-talk | Implemented |
+| Quick Dictation shortcut | User-configurable in Settings › Shortcuts; Hold Fn by default, with Control–Option–Space as the migrated legacy default |
 | Hands-free mode and 30-minute ceiling | Implemented |
 | Existing audio/video file transcription | WAV, MP3, M4A/ALAC, AAC, CAF, AIFF, FLAC, MP4, M4V, MOV; adaptive estimate before confirm; fast warm offline path; cancel and automatic text output |
 | Concurrent microphone + Mac system-audio transcription | Implemented and dual-stream engine tested |
@@ -27,7 +31,9 @@ Updated August 15, 2026.
 | System Audio permission and live capability check | Implemented; optional and independent of Quick Dictation |
 | One-at-a-time privacy onboarding | Implemented; no automatic request chaining |
 | Permission capability checks | Implemented for Accessibility, the live global shortcut, and live System Audio |
-| Control–Option–C conversation toggle and menu-bar timer | Implemented and shortcut tested |
+| Conversation toggle and menu-bar timer | User-configurable in Settings › Shortcuts, Control–Option–C by default; shortcut tested |
+| Idle model unloading, login item, Recent Dictations, activity glyph, save notification | Implemented; Memory choice per feature in Models & Startup, SMAppService login item for the installed app, five-entry session history, glyph changes while listening/reading/transcribing, notification on conversation save |
+| Menu-bar status for both features | Implemented; independent Speech to Text and Text to Speech status rows with a combined icon tint |
 | Focus-preserving live overlay | Implemented |
 | Accessibility insertion and clipboard fallback | Implemented |
 | Cross-window focus acquisition and recoverable target errors | Implemented |
@@ -38,6 +44,14 @@ Updated August 15, 2026.
 | Stable local-build TCC signing requirement | Implemented; development only |
 | Developer ID signing and Apple notarization | Required before public release |
 | Broad manual application compatibility matrix | Requires user/release QA |
+
+The installed 0.4.1 build 20 was atomically replaced in Applications and passed
+code-sign verification. The 13 pre-existing preferences were unchanged.
+Microphone and Accessibility remained available; English speech recognition
+reached Ready; the 8-bit Read Aloud choice and Ryan were retained; and the two
+features kept their independent startup choices. Earlier production and preview
+workers were gone after replacement. This is a local installed-app check, not a
+broad release QA result; the final pass did not repeat a full network download.
 
 Automated real-engine validation uses the published Q8 model and NVIDIA's JFK
 PCM sample. It starts the bundled-equivalent Metal runtime, connects through
