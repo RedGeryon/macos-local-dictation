@@ -22,7 +22,8 @@ Speaker channel.
 - One selected model is loaded at a time; changing models restarts the local
   worker, while changing language updates the warm recognition session without
   reloading model weights.
-- Fn push-to-talk with Control–Option–Space fallback.
+- Fn push-to-talk by default, with Control–Option–Space as a configurable
+  fallback; the shortcut is user-configurable in Settings › Shortcuts.
 - Long microphone-only dictation with explicit stop and a 30-minute safety limit.
 - Two-channel conversation transcription with explicit Stop and Save.
 - Text output under Documents with elapsed timestamps and You/Speaker labels.
@@ -37,7 +38,8 @@ Speaker channel.
   output route to recover after conversation capture without a retained client.
 - A 900 ms post-Stop tail and dual-decoder completion barrier before the
   transcript footer is saved.
-- Control–Option–C toggling, compact menu-bar elapsed timer, and rapid restart
+- Control–Option–C toggling by default (configurable in Settings › Shortcuts),
+  compact menu-bar elapsed timer, and rapid restart
   queued while the previous file finalizes.
 - Normal Accessibility-aware native, browser, and Electron text fields.
 - The ChatGPT/Codex composer through a frontmost-app paste fallback because its

@@ -5,6 +5,11 @@ final class DictationOverlayController {
     private let panel: NSPanel
     private let stateLabel = NSTextField(labelWithString: "Listening…")
     private let transcriptLabel = NSTextField(wrappingLabelWithString: "")
+    private var activeMessageID: UUID?
+    private var messageDismissTask: Task<Void, Never>?
+
+    var hasActiveMessage: Bool { activeMessageID != nil }
+    var isVisible: Bool { panel.isVisible }
 
     init() {
         panel = NSPanel(
@@ -51,6 +56,7 @@ final class DictationOverlayController {
     }
 
     func showListening(mode: DictationMode) {
+        activeMessageID = nil
         stateLabel.stringValue = mode == .pushToTalk
             ? "Listening — release to insert · Esc to cancel"
             : "Hands-free — choose Stop or press Esc"
@@ -63,20 +69,55 @@ final class DictationOverlayController {
     }
 
     func showFinalizing() {
+        activeMessageID = nil
         stateLabel.stringValue = "Transcribing…"
     }
 
     func showCapturingTail() {
+        activeMessageID = nil
         stateLabel.stringValue = "Finishing speech…"
     }
 
-    func showMessage(_ message: String) {
+    @discardableResult
+    func showMessage(_ message: String) -> UUID {
+        let messageID = UUID()
+        activeMessageID = messageID
         stateLabel.stringValue = message
         transcriptLabel.stringValue = ""
         show()
+        return messageID
+    }
+
+    func hideMessage(_ messageID: UUID) {
+        guard activeMessageID == messageID else { return }
+        messageDismissTask?.cancel()
+        messageDismissTask = nil
+        activeMessageID = nil
+        panel.orderOut(nil)
+    }
+
+    @discardableResult
+    func showTransientMessage(
+        _ message: String,
+        duration: Duration = .seconds(1.8),
+        onDismiss: @escaping @MainActor (UUID) -> Void
+    ) -> UUID {
+        messageDismissTask?.cancel()
+        let messageID = showMessage(message)
+        messageDismissTask = Task { [weak self] in
+            try? await Task.sleep(for: duration)
+            guard !Task.isCancelled, let self, self.activeMessageID == messageID else { return }
+            self.activeMessageID = nil
+            self.panel.orderOut(nil)
+            onDismiss(messageID)
+        }
+        return messageID
     }
 
     func hide() {
+        messageDismissTask?.cancel()
+        messageDismissTask = nil
+        activeMessageID = nil
         panel.orderOut(nil)
     }
 

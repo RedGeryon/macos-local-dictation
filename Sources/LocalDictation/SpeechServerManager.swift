@@ -63,6 +63,7 @@ final class SpeechServerManager {
     private let logger = Logger(subsystem: "org.localdictation.app", category: "SpeechServer")
     private let session: URLSession
     private var process: Process?
+    private var watchdog: ChildProcessWatchdog?
     private var launchPlan: SpeechServerLaunchPlan?
     private var intentionallyStoppedProcessIDs: Set<Int32> = []
     private var automaticRestartUsed = false
@@ -105,6 +106,10 @@ final class SpeechServerManager {
             port: selectedPort
         )
 
+        // Helpers left behind by a crashed or force-quit earlier instance would
+        // otherwise keep memory and a port until the Mac restarts.
+        OrphanedHelperReaper.reap()
+
         let child = Process()
         child.executableURL = plan.executableURL
         child.arguments = plan.arguments
@@ -133,6 +138,8 @@ final class SpeechServerManager {
 
         process = child
         launchPlan = plan
+        watchdog?.cancel()
+        watchdog = ChildProcessWatchdog(helperProcessID: child.processIdentifier)
         logger.info("SPEECH_SERVER_STARTED pid=\(child.processIdentifier, privacy: .public) port=\(selectedPort, privacy: .public)")
 
         do {
@@ -179,6 +186,8 @@ final class SpeechServerManager {
         if process?.processIdentifier == processIdentifier {
             process = nil
             launchPlan = nil
+            watchdog?.cancel()
+            watchdog = nil
         }
     }
 
@@ -194,6 +203,8 @@ final class SpeechServerManager {
         }
         process = nil
         launchPlan = nil
+        watchdog?.cancel()
+        watchdog = nil
     }
 
     private func waitUntilReady(plan: SpeechServerLaunchPlan, child: Process) async throws {
@@ -223,6 +234,8 @@ final class SpeechServerManager {
         guard process?.processIdentifier == processIdentifier else { return }
         process = nil
         launchPlan = nil
+        watchdog?.cancel()
+        watchdog = nil
         guard !wasIntentional else { return }
         logger.error("SPEECH_SERVER_UNEXPECTED_EXIT code=\(status, privacy: .public)")
         onStateChange?(.serverUnavailable("Speech engine stopped unexpectedly (code \(status))."))

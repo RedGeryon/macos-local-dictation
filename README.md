@@ -3,111 +3,155 @@
 > Working title: public branding is intentionally undecided pending a
 > trademark review.
 
-An open-source, local-first menu-bar app for English, Spanish, and multilingual
-dictation in normal macOS text fields. Hold a key, speak, release, and the final
-transcript is inserted at the cursor.
+An open-source, local-first menu-bar app that transcribes speech and reads text
+aloud on your Mac. No account is required. Both features run locally after their
+optional model weights are downloaded separately.
 
-The app uses NVIDIA's Apache-2.0
-[NeMo-Speech.cpp](https://github.com/NVIDIA/NeMo-Speech.cpp) runtime and one
-separately downloaded model: NVIDIA's specialized
-[Nemotron Speech Streaming English 0.6B Q8](https://huggingface.co/nvidia/nemotron-speech-streaming-en-0.6b)
-or [Nemotron 3.5 ASR Streaming Multilingual 0.6B Q8](https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b).
-Model weights are never included in this repository or application package.
+## Install or replace the app
 
-## Install the current Mac build
+For a build supplied as a DMG, quit Local Dictation, open the DMG, and drag
+**Local Dictation** to **Applications**. Choose **Replace** if Finder asks.
+Open the copy in Applications, not the copy on the DMG, before granting macOS
+permissions. Development builds are ad-hoc signed and may require
+Control-click → Open; a public release must be Developer ID signed and
+notarized.
 
-Generate the installer with `bash scripts/generate-dmg.sh`, open
-`dist/Local-Dictation-0.3.11-macOS-arm64.dmg`, and drag **Local Dictation** to
-**Applications**. This development build is ad-hoc signed; a public download
-must be Developer ID signed and notarized.
+Replacing the installed app preserves its saved macOS preferences and leaves
+`~/Library/Application Support/LocalDictation` in place for local models, the
+Read Aloud runtime, and saved voice references. A development preview has a
+separate identity; its data is not automatically promoted by a normal
+replacement. Source-build and packaging instructions are in
+[Building and releasing](docs/BUILDING_AND_RELEASE.md).
 
-The generator supports Apple Silicon Macs and requires the Xcode Command Line
-Tools plus [Homebrew](https://brew.sh). On its first run it builds the
-Apache-2.0 NeMo-Speech.cpp runtime locally, bundles that runtime and its license
-notices, signs the development app, and creates the DMG. The separately licensed
-model is not placed in the installer. Later runs reuse the local runtime. The
-runtime source revision is pinned in
-[the bundled-component record](docs/BUNDLED_COMPONENTS.md) for reproducible
-packaging.
+## Set up only the features you use
 
-### Choose and download a model
+Open **Models & Startup**. Speech to Text and Text to Speech are separate:
+each has an **Enabled** choice and a **Load at startup** choice. Opening the
+page reports what is installed; it does not load a model by itself.
+Enabled state, startup choices, model choice, and saved voice settings persist
+locally for the installed app.
 
-On first setup, the app asks whether you want the English or multilingual
-model. It downloads the selected official Q8 file without leaving the app,
-shows byte and percentage progress plus the permanent save location, and offers
-a Cancel control. Once complete, it verifies the pinned file size, SHA-256, and
-GGUF signature, selects the model automatically, and starts the local worker.
-If a valid model path was saved by an earlier installation, setup uses it and
-does not ask again.
-The verified files are stored under
-`~/Library/Application Support/LocalDictation/Models`.
+Each main model picker shows only verified downloads. If it says **No models
+downloaded**, choose **Add Model…** to open the catalog. **Download** adds that
+model to the installed list. It does not load it into memory. The first usable
+download becomes the choice only when there is no valid choice already; adding
+another model keeps the current choice. Use **Load now** when you want the
+selected model ready immediately.
 
-For English-only use, NVIDIA recommends its specialized English model. Read its
-[NVIDIA Open Model License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/),
-then download it with:
+When a feature is enabled, selecting another verified installed model switches
+to it and loads it. When the feature is disabled, a selection is saved without
+loading anything; enable the feature, then choose **Load now** later (or use a
+saved startup choice on the next launch). Changing a model does not change
+**Load at startup**.
 
-```bash
-bash scripts/download-model.sh --model english --accept-nvidia-model-license
+- **Speech to Text:** in **Add Model…**, download either the NVIDIA English Q8
+  model for English dictation or the NVIDIA multilingual Q8 model for Spanish
+  and other supported languages. The multilingual model supports Auto Detect
+  and explicit locales.
+- **Text to Speech:** use **Add Model…** to download Qwen 1.7B BF16 or 8-bit
+  Preset voices. If the local Read Aloud runtime is not present, the app sets it
+  up before the requested download. If weights are already installed but the
+  runtime is missing, use **Set up Read Aloud** as recovery. BF16 is the initial
+  model preference; no voice weights are included until you choose **Download**.
+  The 8-bit
+  option has a smaller download and lower memory use; it is not claimed to match
+  BF16 for naturalness, pronunciation, or voice identity. VoiceDesign and Base
+  are optional additional downloads for creating a new persistent custom voice.
+
+Downloads and installation happen inside the app. The separate model terms are
+linked there and summarized in [third-party notices](THIRD_PARTY_NOTICES.md).
+
+## Daily use
+
+The menu is organized into two sections, **Speech to Text** and **Text to
+Speech**, each with its own status row and colored dot (green Ready, gray Not
+loaded, blue busy, red recording, orange needs attention). Clicking a status
+row opens the Settings page that explains it. Below both sections are
+**Settings…**, **Models & Startup…**, and a **Help** submenu. The menu-bar icon
+itself also changes color to reflect whichever feature needs the most
+attention.
+
+- For dictation, allow Microphone and Accessibility on the **Speech to Text**
+  page in Settings, focus a normal text field, hold the Quick Dictation
+  shortcut (Hold Fn by default), speak, and release. **Escape** cancels. Use
+  the multilingual model for Spanish or other supported languages.
+- For readback, choose **Read Selected Text** or press **Control–Option–R** (by
+  default; change it in Settings › Shortcuts). **Read Clipboard** is available
+  when an app does not expose a standard text selection. **Escape** stops
+  readback and **Control–Option–P** (by default; change it in Settings ›
+  Shortcuts) pauses or resumes it. Selected-text readback needs Accessibility;
+  clipboard reading does not.
+- For longer audio, open **Text to Speech**, choose a voice, optionally add a
+  delivery instruction, then use **Save & Use Voice**. The Audio tab keeps its
+  text draft separate and saves 24 kHz mono RF64 audio. Previewing a voice does
+  not change the voice used for later readback or exports.
+
+Ryan is the default English voice. **Designed Narrator** reuses a saved local
+reference through the Base model; Aiden is another preset. These names are
+product choices, not quality rankings. Read [the model decision and its
+limits](docs/tts-model-research.md) before treating a model as a universal
+quality or speed winner.
+
+### Escape cancels anything
+
+Escape cancels a dictation without inserting text, stops readback, and clears
+a pending start while a model loads. It works in every app and is fixed on
+purpose, so there is always one key that gets you out.
+
+### Keyboard shortcuts
+
+Open **Settings › Shortcuts** to see and change every shortcut in one place:
+Quick Dictation, Conversation Transcript, Read Selected Text, and Pause or
+Resume Readback. Click a shortcut field and press the keys you want; **Delete**
+clears it (that action then has no shortcut), and **Escape** keeps the current
+one. A shortcut must include Control, Option, or Command, or be an F-key.
+Escape itself always cancels dictation or stops readback and cannot be
+reassigned. The page warns you if two actions end up sharing the same
+combination, and **Restore Defaults** puts everything back to Hold Fn for Quick
+Dictation, Control–Option–C for the conversation transcript, Control–Option–R
+for Read Selected Text, and Control–Option–P for Pause or Resume Readback. If
+you previously used Control–Option–Space for push-to-talk, it is carried over
+automatically as a custom Quick Dictation shortcut.
+
+## Local data and developer preview
+
+For the installed app, local support files are stored under
+`~/Library/Application Support/LocalDictation`:
+
+```text
+Models/       Speech-to-text model files
+TTSRuntime/   Read Aloud Python environment
+TTSModels/    Qwen model snapshots
+SavedVoices/  persistent custom-voice references
 ```
 
-[Manual English Q8 GGUF download](https://huggingface.co/nvidia/nemotron-speech-streaming-en-0.6b/resolve/main/nemotron-speech-streaming-en-0.6b.q8_0.gguf?download=true)
+Generated audio and transcript files stay where the app tells you. **Help → How
+to Remove… → Remove Local Data…** removes application-support data; it does not
+remove exported audio or transcript documents.
 
-For Spanish or multilingual use, read the multilingual model's
-[OpenMDW 1.1 license](https://openmdw.ai/license/1-1/), then download:
+`bash scripts/run-preview.sh` is for developers. It creates a separate preview
+app identity, **Local Dictation Preview**. macOS may still list an older preview
+entry as **Local Dictation TTS Preview**. Its privacy permissions do not apply
+to the installed **Local Dictation** app.
 
-```bash
-bash scripts/download-model.sh --model multilingual --accept-openmdw-license
-```
+## Dictation details
 
-[Manual multilingual Q8 GGUF download](https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b/resolve/main/nemotron-3.5-asr-streaming-0.6b.q8_0.gguf?download=true)
+Open the **Speech to Text** page and allow Microphone and Accessibility one row
+at a time. Input Monitoring is not required. The installed **Local Dictation** app is
+the entry to enable in System Settings; do not approve a copy on the DMG or a
+development preview instead.
 
-The multilingual model supports automatic language detection and 32
-out-of-box transcription locales. These include Spanish (`es-US`, `es-ES`),
-English, French, Portuguese, German, Italian, and others listed on the
-[official model card](https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b#supported-languages).
-Setup exposes Auto Detect plus every out-of-box locale. A fixed Spanish locale
-is best for Spanish-only dictation; Auto Detect is useful when utterances may
-change language. This is transcription, not translation.
+Put the cursor in a normal editable field, hold the Quick Dictation shortcut
+(Hold Fn by default), speak, and release. Change it to a key combination such
+as Control–Option–Space in Settings › Shortcuts if Fn is unavailable. **Escape**
+cancels. **Start Long Dictation (Microphone Only)** is for longer speech and
+stops automatically after 30 minutes.
 
-The terminal commands and manual links are fallback options. Normally, click
-**Download and Use English** or **Download and Use Multilingual** in Settings.
-To fetch both through the terminal, pass `--model all` plus both acceptance
-flags. The app loads only the currently selected file. The packaged app contains
-the small NeMo-Speech.cpp runtime and its required notices, but neither the
-approximately 700 MB English model nor the approximately 742 MB multilingual
-model.
-
-## Dictate
-
-1. Open Local Dictation from Applications and open **Settings…**. Approve
-   Microphone and Accessibility one row at a time. The app
-   never starts another privacy request automatically. Each green check reflects
-   macOS approval. Input Monitoring is not required: Accessibility authorizes
-   both the global shortcut listener and insertion into other apps.
-
-While Settings is open, Local Dictation temporarily appears in the Dock and
-Command–Tab so it is easy to return after macOS brings System Settings forward.
-Closing Settings returns it to a menu-bar-only app.
-
-If the app is opened directly from the DMG, setup requires installation first
-and offers **Install in Applications and Relaunch**. This prevents macOS from
-granting privacy access to a temporary disk-image path. If an ad-hoc rebuild
-leaves an older entry enabled but undetected, use **Repair Stale Permission
-Registration…** to reset only this app and repeat the native prompts.
-2. Put the cursor in a normal editable field in Notes, Mail, a browser, Slack,
-   an editor, or another app.
-3. Hold **Fn**, speak, and release. Press **Esc** to cancel.
-4. If Fn is unavailable, choose **Control–Option–Space** in Dictation Settings.
-5. Use **Start Long Dictation (Microphone Only)** for longer speech, then choose
-   Stop and Insert. Long dictation stops automatically after 30 minutes.
-
-Only the final transcript is inserted. The overlay's partial text never edits
-the target app. “Press enter” at the end of an utterance can submit after text
-insertion, but automatic Return is blocked in known terminal applications.
-
-Password fields and custom editors that expose neither standard Accessibility
-text insertion nor paste are intentionally unsupported. Clipboard fallback
-preserves and restores all pasteboard representations.
+Only final text is inserted. The overlay's partial text never edits the target
+app. “Press enter” at the end of an utterance can submit after text insertion,
+but automatic Return is blocked in known terminal applications. Password fields
+and custom editors that expose neither standard Accessibility insertion nor paste
+are unsupported. Clipboard fallback preserves and restores pasteboard formats.
 
 ## Transcribe an existing audio or video file
 
@@ -135,8 +179,9 @@ The temporary audio is removed afterward, and the finished text opens from:
 
 ## Transcribe a two-sided conversation
 
-Press **Control–Option–C**, or choose **Start Conversation Transcript** from the
-menu-bar icon. The first use asks macOS for **System Audio Recording** access
+Press **Control–Option–C** (by default; change it in Settings › Shortcuts), or
+choose **Start Conversation Transcript** from the menu-bar icon. The first use
+asks macOS for **System Audio Recording** access
 in addition to the existing microphone permission. This optional permission
 never blocks Quick Dictation. Despite the macOS permission name, Local Dictation
 registers only an audio output with
@@ -148,7 +193,7 @@ During the session, two independent local recognition streams are labeled:
 - **You** — the selected microphone.
 - **Speaker** — audio playing through the Mac, including headphones.
 
-Press **Control–Option–C** again when finished. A tiny red menu-bar timer is the
+Press the same shortcut again when finished. A tiny red menu-bar timer is the
 persistent recording indicator; the large dictation overlay stays hidden. The
 app completes both streams before showing Ready and writes timestamped text continuously to
 `Documents/Local Dictation Transcripts`. Each start creates a separate `.txt`
@@ -188,7 +233,9 @@ diarization within the system-audio channel is not supported.
   out-of-box locales from Nemotron 3.5 ASR, including `es-US` and `es-ES`.
 - Warm, stateful streaming inference with 80 ms transport batches and the
   runtime's 160 ms low-latency model configuration.
-- Fn or Control–Option–Space push-to-talk; menu-controlled long-dictation mode.
+- User-configurable shortcuts: Quick Dictation (Hold Fn by default, or a chosen
+  key combination such as Control–Option–Space), hands-free Long Dictation
+  (Control–Option–L), conversation transcripts, and readback.
 - Live, non-focus-stealing preview; Escape cancellation; Paste Last.
 - Context-aware spacing, conservative filler/repetition cleanup, and final
   command parsing.
@@ -202,8 +249,10 @@ diarization within the system-audio channel is not supported.
   sends ensure the last spoken words reach the decoder before finalization.
 - A bundled Apache-2.0 runtime, one selected separately downloaded NVIDIA
   model, and local child-process cleanup on quit.
-- Green Ready indicators in both Settings and the menu, with English shown as
-  the only language when the English-only model is selected.
+- Independent status dots for Speech to Text and Text to Speech in both
+  Settings and the menu (green Ready, gray Not loaded, blue busy, red
+  recording, orange needs attention), with English shown as the only language
+  when the English-only model is selected.
 - Sleep/wake recovery that cancels stale model loads, recycles the local worker
   after audio devices return, and caps quit at five seconds before force cleanup.
 - Fast local file transcription for common audio and video containers, with a
@@ -211,8 +260,9 @@ diarization within the system-audio channel is not supported.
   progress/cancel, and automatically opened `.txt` output.
 - Two-channel conversation transcription from microphone and Mac system audio,
   with labeled, timestamped local text files and no persisted audio or video.
-- Control–Option–C conversation toggle with a compact menu-bar recording timer,
-  brief saved confirmation, and queued rapid restart.
+- User-configurable conversation toggle (Control–Option–C by default) with a
+  compact menu-bar recording timer, brief saved confirmation, and queued rapid
+  restart.
 - Independent raw microphone and clean system-output streams, with conservative,
   time-aligned fuzzy removal of leaked Speaker phrases from the You channel.
 - Unified macOS 15+ capture ownership for clean AirPods route release, plus a
@@ -248,6 +298,7 @@ the ignored `build/` and `dist/` directories.
 
 ## Project documentation
 
+- [User guide: install and use](docs/USER_GUIDE.md)
 - [Release notes](CHANGELOG.md)
 - [Building and releasing](docs/BUILDING_AND_RELEASE.md)
 - [Architecture](docs/ARCHITECTURE.md)
@@ -258,6 +309,8 @@ the ignored `build/` and `dist/` directories.
 - [Legal and licensing](docs/LEGAL_AND_LICENSING.md)
 - [Bundled component record](docs/BUNDLED_COMPONENTS.md)
 - [Install and remove](INSTALL_AND_REMOVE.md)
+- [Text-to-speech model decision](docs/tts-model-research.md)
+- [Text-to-speech validation](docs/tts-validation.md)
 - [Contributing](CONTRIBUTING.md)
 
 ## Remove

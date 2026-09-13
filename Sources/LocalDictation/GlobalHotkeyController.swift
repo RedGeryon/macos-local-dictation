@@ -1,21 +1,40 @@
 import ApplicationServices
 import Foundation
+import OSLog
 
 enum GlobalHotkeyEvent: Sendable {
     case pushToTalkBegan
     case pushToTalkEnded
     case toggleHandsFree
     case toggleConversation
+    case readSelectedText
+    case pauseOrResumeTextToSpeech
     case cancel
 }
 
-enum GlobalShortcutMatcher {
-    static func isConversationToggle(keyCode: Int64, flags: CGEventFlags) -> Bool {
-        guard keyCode == 8 else { return false } // C
-        let required: CGEventFlags = [.maskControl, .maskAlternate]
-        let disallowed: CGEventFlags = [.maskCommand, .maskShift]
-        return flags.intersection(required) == required
-            && flags.intersection(disallowed).isEmpty
+enum GlobalHotkeyRouting {
+    static func shouldRouteEscape(dictationActive: Bool, textToSpeechActive: Bool, transientMessageVisible: Bool) -> Bool {
+        dictationActive || textToSpeechActive || transientMessageVisible
+    }
+}
+
+enum TextToSpeechSelectionCaptureGate {
+    static func canBegin(canUseTextToSpeech: Bool, capturePending: Bool) -> Bool {
+        canUseTextToSpeech && !capturePending
+    }
+
+    static func shouldConsumeReadShortcut(capturePending: Bool, matchesReadShortcut: Bool) -> Bool {
+        capturePending && matchesReadShortcut
+    }
+}
+
+enum TextToSpeechShortcutGate {
+    static func readEnabled(settingsEnabled: Bool, canStart: Bool, isActive: Bool) -> Bool {
+        settingsEnabled && canStart && !isActive
+    }
+
+    static func pauseEnabled(settingsEnabled: Bool, isSpeaking: Bool) -> Bool {
+        settingsEnabled && isSpeaking
     }
 }
 
@@ -24,16 +43,29 @@ final class GlobalHotkeyController {
     typealias Handler = @MainActor (GlobalHotkeyEvent) -> Void
 
     var onEvent: Handler?
-    var shortcut: DictationShortcut = .functionKey
+    var bindings: ShortcutBindings = .standard
+    /// While the Settings window records a new shortcut the tap must stay quiet so the
+    /// old binding does not fire under the user's fingers.
+    var isSuspended = false
     var isDictationActive = false
+    var isDictationShortcutEnabled = false
     var isConversationShortcutEnabled = false
+    var isLongDictationShortcutEnabled = false
+    var isTextToSpeechReadShortcutEnabled = false
+    var isTextToSpeechPauseShortcutEnabled = false
+    var isTextToSpeechActive = false
+    var isTextToSpeechSelectionCaptureActive = false
+    var isTransientMessageVisible = false
 
+    private let logger = Logger(subsystem: "org.localdictation.app", category: "GlobalHotkey")
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var functionKeyDown = false
     private var functionKeyConsumed = false
     private var alternateShortcutDown = false
     private var conversationShortcutDown = false
+    private var longDictationShortcutDown = false
+    private var textToSpeechShortcutDown: Int64?
 
     var isRunning: Bool {
         guard let eventTap, CFMachPortIsValid(eventTap) else { return false }
@@ -65,6 +97,7 @@ final class GlobalHotkeyController {
             stop()
             return false
         }
+        logger.info("GLOBAL_HOTKEY tap_started")
         return true
     }
 
@@ -79,6 +112,8 @@ final class GlobalHotkeyController {
         functionKeyConsumed = false
         alternateShortcutDown = false
         conversationShortcutDown = false
+        longDictationShortcutDown = false
+        textToSpeechShortcutDown = nil
     }
 
     private static let eventCallback: CGEventTapCallBack = { _, type, event, userInfo in
@@ -95,11 +130,21 @@ final class GlobalHotkeyController {
             return false
         }
 
+        guard !isSuspended else { return false }
+
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
 
-        if type == .keyDown, keyCode == 53, isDictationActive {
+        if type == .keyDown, keyCode == 53, GlobalHotkeyRouting.shouldRouteEscape(
+            dictationActive: isDictationActive,
+            textToSpeechActive: isTextToSpeechActive || isTextToSpeechSelectionCaptureActive,
+            transientMessageVisible: isTransientMessageVisible
+        ) {
             onEvent?(.cancel)
+            return true
+        }
+
+        if handleTextToSpeechShortcut(type: type, event: event, keyCode: keyCode, isRepeat: isRepeat) {
             return true
         }
 
@@ -107,12 +152,94 @@ final class GlobalHotkeyController {
             return true
         }
 
-        switch shortcut {
+        if handleLongDictationShortcut(type: type, event: event, keyCode: keyCode, isRepeat: isRepeat) {
+            return true
+        }
+
+        switch bindings.quickDictation {
         case .functionKey:
             return handleFunctionShortcut(type: type, event: event, keyCode: keyCode, isRepeat: isRepeat)
-        case .controlOptionSpace:
-            return handleAlternateShortcut(type: type, event: event, keyCode: keyCode, isRepeat: isRepeat)
+        case .keyboardShortcut(let shortcut):
+            return handleAlternateShortcut(
+                shortcut: shortcut,
+                type: type,
+                event: event,
+                keyCode: keyCode,
+                isRepeat: isRepeat
+            )
         }
+    }
+
+    private func matchesRead(keyCode: Int64, flags: CGEventFlags) -> Bool {
+        bindings.readSelectedText?.matches(keyCode: keyCode, flags: flags) ?? false
+    }
+
+    private func matchesPause(keyCode: Int64, flags: CGEventFlags) -> Bool {
+        bindings.pauseOrResumeReadback?.matches(keyCode: keyCode, flags: flags) ?? false
+    }
+
+    private func handleTextToSpeechShortcut(
+        type: CGEventType,
+        event: CGEvent,
+        keyCode: Int64,
+        isRepeat: Bool
+    ) -> Bool {
+        if type == .keyUp, textToSpeechShortcutDown == keyCode {
+            textToSpeechShortcutDown = nil
+            return true
+        }
+        guard type == .keyDown else { return false }
+        if textToSpeechShortcutDown == keyCode { return true }
+        if TextToSpeechSelectionCaptureGate.shouldConsumeReadShortcut(
+            capturePending: isTextToSpeechSelectionCaptureActive,
+            matchesReadShortcut: matchesRead(keyCode: keyCode, flags: event.flags)
+        ) {
+            textToSpeechShortcutDown = keyCode
+            logger.info("TTS_READ_SHORTCUT ignored capture_pending=true")
+            return true
+        }
+        let matchesReadShortcut = matchesRead(keyCode: keyCode, flags: event.flags)
+        if matchesReadShortcut, !isTextToSpeechReadShortcutEnabled {
+            logger.info("TTS_READ_SHORTCUT ignored read_enabled=false")
+            return false
+        }
+        if isTextToSpeechReadShortcutEnabled, matchesReadShortcut {
+            textToSpeechShortcutDown = keyCode
+            if !isRepeat {
+                logger.info("TTS_READ_SHORTCUT matched")
+                onEvent?(.readSelectedText)
+            }
+            return true
+        }
+        if isTextToSpeechPauseShortcutEnabled, isTextToSpeechActive,
+           matchesPause(keyCode: keyCode, flags: event.flags) {
+            textToSpeechShortcutDown = keyCode
+            if !isRepeat { onEvent?(.pauseOrResumeTextToSpeech) }
+            return true
+        }
+        return false
+    }
+
+    /// A press starts hands-free dictation; a second press inserts the result.
+    private func handleLongDictationShortcut(
+        type: CGEventType,
+        event: CGEvent,
+        keyCode: Int64,
+        isRepeat: Bool
+    ) -> Bool {
+        guard let binding = bindings.toggleLongDictation else { return false }
+        if type == .keyDown, binding.matches(keyCode: keyCode, flags: event.flags), isLongDictationShortcutEnabled {
+            if !isRepeat, !longDictationShortcutDown {
+                longDictationShortcutDown = true
+                onEvent?(.toggleHandsFree)
+            }
+            return true
+        }
+        if type == .keyUp, keyCode == Int64(binding.keyCode), longDictationShortcutDown {
+            longDictationShortcutDown = false
+            return true
+        }
+        return false
     }
 
     private func handleConversationShortcut(
@@ -121,10 +248,8 @@ final class GlobalHotkeyController {
         keyCode: Int64,
         isRepeat: Bool
     ) -> Bool {
-        let matches = GlobalShortcutMatcher.isConversationToggle(
-            keyCode: keyCode,
-            flags: event.flags
-        )
+        guard let binding = bindings.toggleConversation else { return false }
+        let matches = binding.matches(keyCode: keyCode, flags: event.flags)
 
         if type == .keyDown, matches, isConversationShortcutEnabled {
             if !isRepeat, !conversationShortcutDown {
@@ -133,7 +258,7 @@ final class GlobalHotkeyController {
             }
             return true
         }
-        if type == .keyUp, keyCode == 8, conversationShortcutDown {
+        if type == .keyUp, keyCode == Int64(binding.keyCode), conversationShortcutDown {
             conversationShortcutDown = false
             return true
         }
@@ -149,6 +274,7 @@ final class GlobalHotkeyController {
         if type == .flagsChanged {
             let isNowDown = event.flags.contains(.maskSecondaryFn)
             if isNowDown && !functionKeyDown {
+                guard isDictationShortcutEnabled else { return false }
                 functionKeyDown = true
                 functionKeyConsumed = false
                 onEvent?(.pushToTalkBegan)
@@ -176,22 +302,23 @@ final class GlobalHotkeyController {
     }
 
     private func handleAlternateShortcut(
+        shortcut: KeyboardShortcut,
         type: CGEventType,
         event: CGEvent,
         keyCode: Int64,
         isRepeat: Bool
     ) -> Bool {
-        guard keyCode == 49 else { return false }
-        let required: CGEventFlags = [.maskControl, .maskAlternate]
-        let matches = event.flags.intersection(required) == required
+        guard keyCode == Int64(shortcut.keyCode) else { return false }
+        guard isDictationShortcutEnabled || alternateShortcutDown else { return false }
 
-        if type == .keyDown, matches {
+        if type == .keyDown, shortcut.matches(keyCode: keyCode, flags: event.flags) {
             if !isRepeat, !alternateShortcutDown {
                 alternateShortcutDown = true
                 onEvent?(.pushToTalkBegan)
             }
             return true
         }
+        // The key may be released after the modifiers, so the keyUp is matched on key alone.
         if type == .keyUp, alternateShortcutDown {
             alternateShortcutDown = false
             onEvent?(.pushToTalkEnded)

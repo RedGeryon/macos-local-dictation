@@ -8,6 +8,13 @@ struct LocalDictationMain {
         let delegate = AppDelegate()
         application.delegate = delegate
         application.setActivationPolicy(.accessory)
+        // Development aid: LOCAL_DICTATION_APPEARANCE=dark|light forces one
+        // appearance so both themes can be checked without changing the Mac.
+        switch ProcessInfo.processInfo.environment["LOCAL_DICTATION_APPEARANCE"] {
+        case "dark": application.appearance = NSAppearance(named: .darkAqua)
+        case "light": application.appearance = NSAppearance(named: .aqua)
+        default: break
+        }
         application.run()
     }
 }

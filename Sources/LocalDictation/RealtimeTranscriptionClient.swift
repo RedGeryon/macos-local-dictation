@@ -32,6 +32,8 @@ final class RealtimeTranscriptionClient: @unchecked Sendable {
     typealias SegmentHandler = @MainActor (RealtimeTranscriptSegment) -> Void
     typealias ErrorHandler = @MainActor (Error) -> Void
     typealias ConnectionHandler = @MainActor (Bool) -> Void
+    typealias ConnectionEventHandler = @MainActor (Bool, UUID?) -> Void
+    typealias ErrorEventHandler = @MainActor (Error, UUID?) -> Void
     typealias ClearedHandler = @MainActor () -> Void
 
     private let logger = Logger(subsystem: "org.localdictation.app", category: "RealtimeASR")
@@ -45,28 +47,36 @@ final class RealtimeTranscriptionClient: @unchecked Sendable {
     private var lastCompletedEndTime: TimeInterval = 0
     private var acceptingResults = false
     private var connected = false
+    private var connectionID: UUID?
 
     var onPartial: TextHandler?
     var onSegment: SegmentHandler?
     var onFinal: TextHandler?
     var onError: ErrorHandler?
     var onConnectionChange: ConnectionHandler?
+    /// Session-aware events let an owner ignore callbacks from a socket that
+    /// was deliberately replaced during an engine/model switch.
+    var onConnectionEvent: ConnectionEventHandler?
+    var onErrorEvent: ErrorEventHandler?
     var onCleared: ClearedHandler?
 
     init(session: URLSession = .shared) {
         self.session = session
     }
 
+    @discardableResult
     func connect(
         to url: URL,
         automaticPunctuation: Bool,
         languageCode: String = RecognitionLanguage.englishUS.rawValue,
         wordTimestamps: Bool = false,
         endpointingMilliseconds: Int? = nil
-    ) {
+    ) -> UUID {
+        let newConnectionID = UUID()
         queue.async { [weak self] in
             guard let self else { return }
             self.disconnectLocked(notify: false)
+            self.connectionID = newConnectionID
             let socket = self.session.webSocketTask(with: url)
             self.socket = socket
             socket.resume()
@@ -78,6 +88,7 @@ final class RealtimeTranscriptionClient: @unchecked Sendable {
                 endpointingMilliseconds: endpointingMilliseconds
             ))
         }
+        return newConnectionID
     }
 
     static func sessionUpdateMessage(
@@ -171,7 +182,7 @@ final class RealtimeTranscriptionClient: @unchecked Sendable {
                     self.receiveNext(on: socket)
                 case .failure(let error):
                     self.connected = false
-                    self.notifyConnection(false)
+                    self.notifyConnection(false, connectionID: self.connectionID)
                     if (error as NSError).code != NSURLErrorCancelled {
                         self.notifyError(error)
                     }
@@ -192,7 +203,7 @@ final class RealtimeTranscriptionClient: @unchecked Sendable {
         switch type {
         case "session.created":
             connected = true
-            notifyConnection(true)
+            notifyConnection(true, connectionID: connectionID)
         case "session.updated":
             logger.info("REALTIME_SESSION_READY")
         case "conversation.item.input_audio_transcription.delta":
@@ -284,16 +295,18 @@ final class RealtimeTranscriptionClient: @unchecked Sendable {
     }
 
     private func disconnectLocked(notify: Bool) {
+        let disconnectedID = connectionID
         socket?.cancel(with: .goingAway, reason: nil)
         socket = nil
         outgoingMessages.removeAll(keepingCapacity: false)
         sendInFlight = false
         connected = false
+        connectionID = nil
         acceptingResults = false
         completedSegments.removeAll()
         partial = ""
         lastCompletedEndTime = 0
-        if notify { notifyConnection(false) }
+        if notify { notifyConnection(false, connectionID: disconnectedID) }
     }
 
     private func notifyPartial(_ text: String) {
@@ -309,11 +322,18 @@ final class RealtimeTranscriptionClient: @unchecked Sendable {
     }
 
     private func notifyError(_ error: Error) {
-        Task { @MainActor [weak self] in self?.onError?(error) }
+        let eventConnectionID = connectionID
+        Task { @MainActor [weak self] in
+            self?.onError?(error)
+            self?.onErrorEvent?(error, eventConnectionID)
+        }
     }
 
-    private func notifyConnection(_ value: Bool) {
-        Task { @MainActor [weak self] in self?.onConnectionChange?(value) }
+    private func notifyConnection(_ value: Bool, connectionID: UUID?) {
+        Task { @MainActor [weak self] in
+            self?.onConnectionChange?(value)
+            self?.onConnectionEvent?(value, connectionID)
+        }
     }
 
     private func notifyCleared() {

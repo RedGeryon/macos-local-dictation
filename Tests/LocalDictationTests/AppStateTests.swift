@@ -3,6 +3,34 @@ import CoreGraphics
 @testable import LocalDictation
 
 final class AppStateTests: XCTestCase {
+    func testRealtimeEventAcceptanceRejectsStaleAndUnidentifiedConnections() {
+        let active = UUID()
+        XCTAssertTrue(AppCoordinator.acceptsRealtimeEvent(
+            connectionID: active,
+            expectedConnectionID: active,
+            dictationEnabled: true,
+            isUnloading: false
+        ))
+        XCTAssertFalse(AppCoordinator.acceptsRealtimeEvent(
+            connectionID: UUID(),
+            expectedConnectionID: active,
+            dictationEnabled: true,
+            isUnloading: false
+        ))
+        XCTAssertFalse(AppCoordinator.acceptsRealtimeEvent(
+            connectionID: nil,
+            expectedConnectionID: active,
+            dictationEnabled: true,
+            isUnloading: false
+        ))
+        XCTAssertFalse(AppCoordinator.acceptsRealtimeEvent(
+            connectionID: active,
+            expectedConnectionID: active,
+            dictationEnabled: true,
+            isUnloading: true
+        ))
+    }
+
     func testStateLabelsRemainUnambiguous() {
         XCTAssertEqual(AppState.ready.label, "Ready")
         XCTAssertEqual(AppState.recording(.pushToTalk).label, "Listening")
@@ -71,19 +99,49 @@ final class AppStateTests: XCTestCase {
     }
 
     func testConversationShortcutIsControlOptionCOnly() {
-        XCTAssertTrue(GlobalShortcutMatcher.isConversationToggle(
-            keyCode: 8,
-            flags: [.maskControl, .maskAlternate]
-        ))
-        XCTAssertFalse(GlobalShortcutMatcher.isConversationToggle(
-            keyCode: 8,
-            flags: [.maskControl, .maskAlternate, .maskCommand]
-        ))
-        XCTAssertFalse(GlobalShortcutMatcher.isConversationToggle(
-            keyCode: 9,
-            flags: [.maskControl, .maskAlternate]
-        ))
-        XCTAssertEqual(ConversationShortcut.title, "Control–Option–C")
+        let conversation = ShortcutBindings.standard.toggleConversation
+        XCTAssertNotNil(conversation)
+        XCTAssertTrue(conversation!.matches(keyCode: 8, flags: [.maskControl, .maskAlternate]))
+        XCTAssertFalse(conversation!.matches(keyCode: 8, flags: [.maskControl, .maskAlternate, .maskCommand]))
+        XCTAssertFalse(conversation!.matches(keyCode: 9, flags: [.maskControl, .maskAlternate]))
+        XCTAssertEqual(conversation?.displayString, "⌃⌥C")
+    }
+
+    func testTextToSpeechShortcutsDoNotMatchModifiedOrDifferentKeys() {
+        let read = ShortcutBindings.standard.readSelectedText
+        let pause = ShortcutBindings.standard.pauseOrResumeReadback
+        XCTAssertNotNil(read)
+        XCTAssertNotNil(pause)
+        XCTAssertTrue(read!.matches(keyCode: 15, flags: [.maskControl, .maskAlternate]))
+        XCTAssertTrue(pause!.matches(keyCode: 35, flags: [.maskControl, .maskAlternate]))
+        XCTAssertFalse(read!.matches(keyCode: 15, flags: [.maskControl, .maskAlternate, .maskCommand]))
+        XCTAssertFalse(pause!.matches(keyCode: 15, flags: [.maskControl, .maskAlternate]))
+    }
+
+    func testTextToSpeechShortcutGateAllowsPauseButNotReadDuringPlayback() {
+        XCTAssertFalse(TextToSpeechShortcutGate.readEnabled(settingsEnabled: true, canStart: false, isActive: true))
+        XCTAssertTrue(TextToSpeechShortcutGate.pauseEnabled(settingsEnabled: true, isSpeaking: true))
+        XCTAssertFalse(TextToSpeechShortcutGate.readEnabled(settingsEnabled: false, canStart: true, isActive: false))
+        XCTAssertFalse(TextToSpeechShortcutGate.pauseEnabled(settingsEnabled: false, isSpeaking: true))
+    }
+
+    func testPreviewStatusUsesTextToSpeechStateInsteadOfASRStartupState() {
+        XCTAssertEqual(TextToSpeechPreviewPresentation.statusText(for: .ready), "Ready")
+        XCTAssertEqual(TextToSpeechPreviewPresentation.buttonTitle(for: .ready), " TTS")
+        XCTAssertEqual(TextToSpeechPreviewPresentation.statusText(for: .unavailable("install it")), "Text to speech needs setup")
+        XCTAssertEqual(TextToSpeechPreviewPresentation.buttonTitle(for: .error("worker failed")), " TTS error")
+    }
+
+    func testEscapeRoutesToDismissAnOtherwiseIdleTransientMessage() {
+        XCTAssertTrue(GlobalHotkeyRouting.shouldRouteEscape(dictationActive: false, textToSpeechActive: false, transientMessageVisible: true))
+        XCTAssertFalse(GlobalHotkeyRouting.shouldRouteEscape(dictationActive: false, textToSpeechActive: false, transientMessageVisible: false))
+    }
+
+    func testPendingSelectionCaptureConsumesRepeatedReadAndBlocksNewWorkUntilCancelled() {
+        XCTAssertFalse(TextToSpeechSelectionCaptureGate.canBegin(canUseTextToSpeech: true, capturePending: true))
+        XCTAssertTrue(TextToSpeechSelectionCaptureGate.shouldConsumeReadShortcut(capturePending: true, matchesReadShortcut: true))
+        XCTAssertFalse(TextToSpeechSelectionCaptureGate.shouldConsumeReadShortcut(capturePending: false, matchesReadShortcut: true))
+        XCTAssertTrue(TextToSpeechSelectionCaptureGate.canBegin(canUseTextToSpeech: true, capturePending: false))
     }
 
     @MainActor
@@ -98,7 +156,19 @@ final class AppStateTests: XCTestCase {
         )
         XCTAssertEqual(
             PermissionManager.systemAudioPrivacyAnchor(majorVersion: 26),
-            "Privacy_AudioCapture"
+            "Privacy_ScreenCapture"
+        )
+    }
+
+    @MainActor
+    func testPrivacyPaneFallbackRetainsTheSpecificPermissionAnchor() {
+        XCTAssertEqual(
+            PermissionManager.legacyPrivacyPaneURL(anchor: "Privacy_Microphone").absoluteString,
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
+        )
+        XCTAssertEqual(
+            PermissionManager.legacyPrivacyPaneURL(anchor: "Privacy_Accessibility").query,
+            "Privacy_Accessibility"
         )
     }
 }
