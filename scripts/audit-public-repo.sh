@@ -31,10 +31,19 @@ fi
 while IFS= read -r email; do
   [ -z "$email" ] && continue
   case "$email" in
-    *@users.noreply.github.com|*@noreply.github.com|*.invalid) ;;
+    noreply@github.com|*@users.noreply.github.com|*@noreply.github.com|*.invalid) ;;
     *) fail "reachable Git history contains a non-private author or committer email" ;;
   esac
-done < <(git log --all --format='%ae%n%ce' | sort -u)
+done < <(git log HEAD --format='%ae%n%ce' | sort -u)
+
+for identity_kind in GIT_AUTHOR_IDENT GIT_COMMITTER_IDENT; do
+  identity="$(git var "$identity_kind")"
+  email="$(printf '%s' "$identity" | sed -n 's/.*<\([^>]*\)>.*/\1/p')"
+  case "$email" in
+    *@users.noreply.github.com|*@noreply.github.com|*.invalid) ;;
+    *) fail "active $identity_kind uses a non-private email address" ;;
+  esac
+done
 
 if ! rg -q '^build/$' .gitignore || ! rg -q '^dist/$' .gitignore; then
   fail ".gitignore does not exclude both build/ and dist/"

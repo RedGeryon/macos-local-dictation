@@ -32,3 +32,12 @@ audio samples or personal transcripts to investigate most defects.
   final installed application bundle.
 
 See [PRIVACY.md](PRIVACY.md) for the complete data-handling statement.
+
+## Public commit gate
+
+This is a public repository. Before every commit, run
+`bash scripts/audit-public-repo.sh`; it checks the tracked files, reachable
+history, and active Git identity for common credentials and personal data. The
+versioned pre-commit hook runs the same check after `git config core.hooksPath
+.githooks` has been set for a clone. A failed audit must be fixed before
+committing or pushing.

@@ -2,7 +2,19 @@
 
 Contributions are welcome after the initial architecture stabilizes.
 
-Before submitting a change:
+Before every commit to this public repository, run the security audit:
+
+```bash
+bash scripts/audit-public-repo.sh
+```
+
+Install the included Git hook once per clone to enforce that rule automatically:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+Before submitting a change, also run:
 
 ```bash
 swift test
@@ -10,9 +22,10 @@ bash scripts/audit-public-repo.sh
 bash scripts/build-app.sh
 ```
 
-Do not commit models, runtime builds, audio recordings, transcripts, signing
-keys, provisioning profiles, or user-specific paths. New user-facing features
-must update `docs/PRODUCT_SCOPE.md` and include deterministic tests. Do not copy
+Do not bypass the security hook without resolving its finding. Do not commit
+models, runtime builds, audio recordings, transcripts, signing keys,
+provisioning profiles, or user-specific paths. New user-facing features must
+update `docs/PRODUCT_SCOPE.md` and include deterministic tests. Do not copy
 another dictation product's code, assets, branding, sounds, or documentation.
 
 Configure GitHub's private-email option or a project-safe no-reply address
