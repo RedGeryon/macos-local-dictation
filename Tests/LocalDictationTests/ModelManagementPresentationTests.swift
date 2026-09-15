@@ -145,6 +145,41 @@ final class ModelManagementPresentationTests: XCTestCase {
         XCTAssertInfoButton("info.Voice Replay", in: installedContent)
     }
 
+    func testStorageShowsPathsAndRemovalControlsAndDeletesOnlyChosenComponent() throws {
+        let fixture = try Fixture()
+        try fixture.installSpeechModel(named: AppConfiguration.modelFileName)
+        try fixture.installTTSComponent("customvoice", model: .bf16)
+        try fixture.installTTSComponent("base", model: .eightBit)
+        let coordinator = fixture.makeCoordinator()
+        coordinator.refreshInstalledSpeechModels()
+        let content = try modelsContent(for: coordinator)
+        XCTAssertTrue(try control("models.storage.removeAll", in: content, as: NSButton.self).isEnabled)
+        XCTAssertEqual(coordinator.storedModels.count, 3)
+        for index in 0..<3 {
+            XCTAssertFalse(try control("models.storage.path.\(index)", in: content, as: NSTextField.self).stringValue.isEmpty)
+            XCTAssertTrue(try control("models.storage.remove.\(index)", in: content, as: NSButton.self).isEnabled)
+        }
+        let component = try XCTUnwrap(coordinator.storedModels.first { $0.url.lastPathComponent.contains("base-8bit") })
+        try coordinator.removeStoredModel(component, move: { try FileManager.default.removeItem(at: $0) })
+        XCTAssertEqual(coordinator.storedModels.count, 2)
+        XCTAssertEqual(coordinator.installedSpeechModels.count, 1)
+        XCTAssertTrue(coordinator.textToSpeechModelInstallStatus.customVoiceInstalled)
+    }
+
+    func testDeletingSelectedSpeechModelKeepsOtherDownloadsAndRequiresASelection() throws {
+        let fixture = try Fixture()
+        try fixture.installSpeechModel(named: AppConfiguration.modelFileName)
+        try fixture.installSpeechModel(named: AppConfiguration.multilingualModelFileName)
+        let coordinator = fixture.makeCoordinator()
+        coordinator.refreshInstalledSpeechModels()
+        let selected = try XCTUnwrap(coordinator.storedModels.first { $0.url.lastPathComponent == AppConfiguration.modelFileName })
+        try coordinator.removeStoredModel(selected, move: { try FileManager.default.removeItem(at: $0) })
+        XCTAssertEqual(coordinator.state, .configurationRequired(.modelMissing))
+        XCTAssertEqual(coordinator.installedSpeechModels.map(\.variant), [.multilingual])
+        XCTAssertEqual(coordinator.dictationEngineStatus, .notLoaded)
+        XCTAssertFalse(coordinator.canRemoveModels, "Wait for the existing unload task before allowing another removal.")
+    }
+
     private func modelsContent(for coordinator: AppCoordinator) throws -> NSView {
         try modelsView(for: coordinator).content
     }

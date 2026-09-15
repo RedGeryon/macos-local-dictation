@@ -388,7 +388,8 @@ struct AppConfiguration: Equatable, Sendable {
         let models = (supportDirectory ?? Self.supportDirectory(fileManager: fileManager)).appendingPathComponent("Models", isDirectory: true)
         let known = [models.appendingPathComponent(modelFileName), models.appendingPathComponent(multilingualModelFileName)]
         let remembered = (defaults.array(forKey: "knownSpeechModelPaths") as? [String] ?? []).map(URL.init(fileURLWithPath:))
-        let candidates = known + remembered + (currentModelURL.map { [$0] } ?? [])
+        let discovered = ((try? fileManager.contentsOfDirectory(at: models, includingPropertiesForKeys: nil)) ?? []).sorted { $0.path < $1.path }
+        let candidates = known + discovered + remembered + (currentModelURL.map { [$0] } ?? [])
         var seen = Set<String>()
         return candidates.compactMap { url in
             let normalized = url.standardizedFileURL

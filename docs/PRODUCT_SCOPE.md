@@ -126,6 +126,21 @@ Cleanup is deterministic and optional where subjective. Automatic Return is
 blocked in known terminal apps. Password fields are refused. No AI rewriting,
 semantic cursor context, continuous idle microphone, or cloud fallback exists.
 
+### Model storage and removal
+
+Models & Startup includes a Storage & Removal section with exact paths, Finder
+links, and per-download Trash controls, including optional voice components and
+partial downloads. Active operations block removal. Removing a loaded model
+stops its worker and refreshes the installed choices. New speech-model imports
+are copied into app storage without replacing an existing file. External files
+and links are visible but never deleted by model removal.
+
+Normal downloaded models, imports, runtime files, saved voices, and new caches
+are contained in LocalDictation's Application Support folder. Removing all local
+data moves that folder to the Trash, clears preferences, disables the login item,
+and quits; the user then trashes the app. Exported documents and custom external
+folders remain under the user's control. Unload only releases memory.
+
 ## Not supported
 
 Intel Macs, Windows, Linux, cloud recognition, accounts, sync, translation,

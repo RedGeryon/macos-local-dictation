@@ -57,12 +57,43 @@ not promise to promote preview-only settings, models, or saved voices.
 └── SavedVoices/  persistent custom-voice references
 ```
 
+## Find or delete a model
+
+Open **Models & Startup → Storage & Removal**. Every speech model and voice
+component has its exact path, **Show in Finder**, and **Move to Trash…**.
+Optional voice components and unfinished downloads are listed too. Stop any
+active transcription, playback, or download before removing a model. The app
+stops the model if loaded and refreshes the installed list. Download it again
+with **Add Model…** when needed.
+
+**Unload** only releases memory; it does not delete the downloaded files.
+Empty the Trash to reclaim disk space after deleting a model.
+
+New speech-model imports are copied into `Models/`. The original is kept;
+you can delete that original yourself once the import succeeds. Older external
+models and symbolic links are labeled as external and can be revealed in Finder.
+The app never deletes those originals automatically.
+
+Normal downloads, imported model copies, the voice runtime, saved voices, and
+new download caches stay under `~/Library/Application Support/LocalDictation/`.
+Voice downloads use a cache inside `TTSModels/`; runtime caches stay inside
+`TTSRuntime/`, and package installation disables the shared pip cache. Existing
+shared caches from older installs are not automatically removed because other
+apps may use them. macOS preferences are stored separately and cleared by
+**Remove All Local Data…**. macOS may also retain temporary files or system logs.
+Developer overrides and previews can use other folders; the actual voice-model
+and runtime paths are shown in Storage & Removal.
+
 ## Remove
 
-Choose **Help → How to Remove… → Remove Local Data…** in Local Dictation, then
+Choose **Models & Startup → Storage & Removal → Remove All Local Data…**
+(or **Help → How to Remove… → Remove Local Data…**), then
 move `/Applications/Local Dictation.app` to the Trash. Local data includes the
 speech and read-aloud models, the Read Aloud runtime, saved voice references,
-and app settings. Exported audio and transcript documents are intentionally not
+and download caches. Files go to the Trash, app settings are cleared, and the
+login item is disabled. Empty the Trash to reclaim disk space. External model
+and custom runtime folders are kept; use the displayed paths to remove those
+separately. Exported audio and transcript documents are intentionally not
 removed; delete them separately if needed.
 
 Developers can instead run:

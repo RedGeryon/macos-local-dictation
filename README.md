@@ -318,10 +318,16 @@ the ignored `build/` and `dist/` directories.
 
 ## Remove
 
-From the menu-bar app choose **How to Remove… → Remove Local Data**, then move
-Local Dictation from Applications to the Trash. This removes the model,
-external development engine, and preferences; the app bundle is removed by
-moving it to Trash.
+Open **Models & Startup → Storage & Removal** to see exact model paths,
+reveal files in Finder, or move individual downloads to the Trash. **Unload**
+frees memory and keeps the files. New imports are copied into the app's model
+folder; their originals are kept.
+
+Normal models, the voice runtime, saved voices, and new download caches live in
+`~/Library/Application Support/LocalDictation/`. Choose **Remove All Local Data…**
+to move that folder to the Trash and clear preferences, then move Local Dictation
+from Applications to the Trash. Empty the Trash to reclaim disk space. Exported
+audio, transcripts, older external models, and custom runtime folders are kept.
 
 If you previously followed the terminal setup guide, run:
 

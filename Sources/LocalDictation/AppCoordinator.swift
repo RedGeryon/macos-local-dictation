@@ -1276,7 +1276,8 @@ final class AppCoordinator: ObservableObject {
         guard canEditSpeechConfiguration else { return }
         let panel = NSOpenPanel()
         panel.title = "Choose the Nemotron Q8 GGUF model"
-        panel.prompt = "Choose Model"
+        panel.prompt = "Import Model"
+        panel.message = "Copies this model into Local Dictation’s model folder. Your original file is kept."
         panel.allowedContentTypes = [.data]
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
@@ -1289,7 +1290,10 @@ final class AppCoordinator: ObservableObject {
             // Import is an explicit installed-model selection. It shares the
             // picker lifecycle: remember it, replace a loaded engine when
             // Dictation is enabled, and remain unloaded when it is disabled.
-            selectInstalledSpeechModel(.init(url: url, variant: SpeechModelVariant.identify(url)))
+            do {
+                let imported = try ModelStorage.importSpeechModel(from: url, support: localDataDirectory)
+                selectInstalledSpeechModel(.init(url: imported, variant: SpeechModelVariant.identify(imported)))
+            } catch { NSAlert(error: error).runModal() }
         }
     }
 
@@ -1397,22 +1401,78 @@ final class AppCoordinator: ObservableObject {
         if !permissionManager.openSystemAudioSettings() { showRecoverableMessage("System Settings could not open Screen & System Audio Recording settings.") }
     }
 
+    var localDataDirectory: URL { modelCatalogConfiguration.supportDirectory }
+    var voiceModelsDirectory: URL { textToSpeechModelsDirectory() }
+    var voiceRuntimeDirectory: URL { textToSpeechRuntimeDirectory() }
+    var storedModels: [StoredModel] {
+        ModelStorage.inventory(support: localDataDirectory, voiceModels: voiceModelsDirectory, speechModels: installedSpeechModels)
+    }
+    var canRemoveModels: Bool {
+        canEditSpeechConfiguration && !isQuitting && !isPowerTransitioning
+            && !modelDownloadState.isDownloading && !textToSpeechInstallState.isActive
+            && !isTextToSpeechOperationActive && dictationEngineStatus != .loading
+            && readAloudEngineStatus != .loading && !isDictationEngineUnloading
+    }
+
+    func confirmRemoveModel(_ item: StoredModel) {
+        guard canRemoveModels, item.isManaged else { return }
+        let alert = NSAlert()
+        alert.messageText = "Move this model to the Trash?"
+        alert.informativeText = "\(item.title)\n\n\(item.url.path)\n\nThe model will stop if it is loaded. You can download it again later. Other models, saved voices, and exported documents are kept. Empty the Trash to reclaim disk space."
+        alert.addButton(withTitle: "Move to Trash")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn, canRemoveModels else { return }
+        do { try removeStoredModel(item) }
+        catch { NSAlert(error: error).runModal() }
+    }
+
+    func removeStoredModel(_ item: StoredModel, move: (URL) throws -> Void = { try FileManager.default.trashItem(at: $0, resultingItemURL: nil) }) throws {
+        guard canRemoveModels else { throw CocoaError(.fileWriteNoPermission) }
+        // Revalidate before stopping a worker or touching the filesystem.
+        guard storedModels.contains(item), item.isManaged else { throw CocoaError(.fileWriteNoPermission) }
+        let selectedSpeech = item.kind == .speech && item.url.standardizedFileURL == configuration.modelURL.standardizedFileURL
+        if selectedSpeech {
+            unloadDictationEngine()
+            serverManager.forceStop()
+        } else if item.kind == .voice {
+            unloadReadAloudEngine()
+        }
+        defer {
+            refreshInstalledSpeechModels()
+            refreshTextToSpeechInstallStatus()
+            objectWillChange.send()
+        }
+        try ModelStorage.trash(item, support: localDataDirectory, voiceModels: voiceModelsDirectory, move: move)
+        if item.kind == .speech {
+            let paths = modelCatalogConfiguration.defaults.stringArray(forKey: "knownSpeechModelPaths") ?? []
+            modelCatalogConfiguration.defaults.set(paths.filter { URL(fileURLWithPath: $0).standardizedFileURL != item.url.standardizedFileURL }, forKey: "knownSpeechModelPaths")
+            modelDownloadState = .idle
+            if selectedSpeech { transition(to: .configurationRequired(.modelMissing)) }
+        } else {
+            textToSpeechInstallState = .idle
+        }
+    }
+
     func showRemovalInstructions() {
         let alert = NSAlert()
         alert.messageText = "Remove Local Dictation"
-        alert.informativeText = "Move Local Dictation from Applications to the Trash. To also remove the downloaded model, engine, and settings, choose Remove Local Data below. Saved conversation and media-file transcripts in Documents are kept unless you delete them separately."
+        alert.informativeText = "To remove everything the app manages, choose Remove Local Data first, then move Local Dictation from Applications to the Trash. To delete just one model, use Models & Startup → Storage & Removal. Saved conversation and media-file transcripts in Documents are kept unless you delete them separately."
         alert.addButton(withTitle: "Done")
         alert.addButton(withTitle: "Remove Local Data…")
         if alert.runModal() == .alertSecondButtonReturn { confirmAndRemoveLocalData() }
     }
 
     func confirmAndRemoveLocalData() {
-        let supportPath = AppConfiguration.supportDirectory().path
+        guard canRemoveModels else {
+            showRecoverableMessage("Finish the current operation or cancel the download before removing local data.")
+            return
+        }
+        let supportPath = localDataDirectory.path
         let alert = NSAlert()
         alert.alertStyle = .critical
-        alert.messageText = "Remove downloaded model and local data?"
-        alert.informativeText = "This permanently removes the speech model and engine files stored by Local Dictation, plus its settings, from:\n\n\(supportPath)\n\nA model you chose from another folder and all transcripts in Documents are left untouched. The application itself remains until you move it to the Trash."
-        alert.addButton(withTitle: "Remove and Quit")
+        alert.messageText = "Move all local data to the Trash?"
+        alert.informativeText = "This moves all managed speech and voice models, the voice runtime, saved voices, and download caches to the Trash, and clears app settings. Data folder:\n\n\(supportPath)\n\nExternal models, custom runtime folders, and exported audio and transcripts are kept. The application itself remains until you move it to the Trash. Empty the Trash to reclaim disk space."
+        alert.addButton(withTitle: "Move Data to Trash and Quit")
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 
@@ -1430,20 +1490,17 @@ final class AppCoordinator: ObservableObject {
         hotkeyController.stop()
         realtimeClient.disconnect()
         terminationDeadlineTask?.cancel()
-        terminationDeadlineTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(5))
-            guard !Task.isCancelled, let self, self.isQuitting else { return }
-            self.serverManager.forceStop()
-            NSApp.terminate(nil)
-        }
         Task { [weak self] in
             guard let self else { return }
             await self.serverManager.stop(graceNanoseconds: 1_000_000_000)
             await self.textToSpeechServer.stop()
             do {
-                let support = AppConfiguration.supportDirectory()
+                let support = self.localDataDirectory
+                if self.loginItemState == .enabled || self.loginItemState == .requiresApproval {
+                    try LoginItemManager.setEnabled(false)
+                }
                 if FileManager.default.fileExists(atPath: support.path) {
-                    try FileManager.default.removeItem(at: support)
+                    try FileManager.default.trashItem(at: support, resultingItemURL: nil)
                 }
                 if let identifier = Bundle.main.bundleIdentifier {
                     UserDefaults.standard.removePersistentDomain(forName: identifier)
@@ -1452,6 +1509,9 @@ final class AppCoordinator: ObservableObject {
             } catch {
                 let failure = NSAlert(error: error)
                 failure.runModal()
+                self.isQuitting = false
+                _ = self.hotkeyController.start()
+                return
             }
             NSApp.terminate(nil)
         }

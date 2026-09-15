@@ -1,5 +1,14 @@
 # Release notes
 
+## Unreleased
+
+- Show model paths and Finder links in Models & Startup, with individual Trash
+  controls for speech models, voice components, and unfinished downloads.
+- Copy new model imports into app storage and contain new download/runtime caches.
+- Move local data to the Trash during removal, clear preferences, and disable
+  the login item. Explain remaining app, exported-document, and external files.
+
+
 ## Unreleased — Menu, Settings, and custom shortcuts
 
 - Active transcription keeps the Mac and display awake, including on battery,

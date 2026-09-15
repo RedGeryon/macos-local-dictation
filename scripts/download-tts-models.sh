@@ -28,6 +28,11 @@ done
 case "$selected" in custom|custom8|design|design8|base|base8|bf16|8bit|all) ;; *) echo "Unknown model: $selected" >&2; exit 2 ;; esac
 [ -x "$python_bin" ] || { echo "Run scripts/setup-tts-runtime.sh first." >&2; exit 1; }
 
+# Keep Hugging Face/Xet caches beside these downloads, never in a shared home cache.
+export HF_HOME="$model_dir/.cache/huggingface"
+export HF_HUB_CACHE="$HF_HOME/hub"
+export HF_XET_CACHE="$HF_HOME/xet"
+export HF_HUB_DISABLE_XET=1
 mkdir -p "$model_dir"
 MODEL_DIR="$model_dir" SELECTED_MODEL="$selected" "$python_bin" - <<'PY'
 from pathlib import Path

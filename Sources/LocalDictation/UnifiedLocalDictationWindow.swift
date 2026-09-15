@@ -1,6 +1,8 @@
 import AppKit
 import Combine
 
+private final class ModelStorageButton: NSButton { var model: StoredModel?; var url: URL? }
+
 private final class FlippedUnifiedDocumentView: NSView { override var isFlipped: Bool { true } }
 
 /// The single Settings window: a source-list sidebar and one scrolling detail
@@ -161,7 +163,7 @@ final class UnifiedLocalDictationWindowController: NSWindowController {
                 "\(coordinator.textToSpeechInstallState)", "\(coordinator.textToSpeechModelInstallStatus)",
                 coordinator.textToSpeechInstallDetail, "\(coordinator.canEditSpeechConfiguration)",
                 "\(coordinator.isTextToSpeechOperationActive)", "\(coordinator.state)", "\(coordinator.textToSpeechState)",
-                "\(showingCustomVoiceDownloads)", "\(coordinator.loginItemState)"
+                "\(showingCustomVoiceDownloads)", "\(coordinator.loginItemState)", "\(coordinator.storedModels)"
             ].joined(separator: "|")
         }
     }
@@ -559,13 +561,72 @@ final class UnifiedLocalDictationWindowController: NSWindowController {
         coordinator.refreshTextToSpeechInstallStatus()
         let pageStack = pageContainer(
             "Models & Startup",
-            "Each feature runs its own local model. Enable a feature, choose which model it uses, and decide whether it loads when the app starts. Models stay on this Mac."
+            "Each feature runs its own local model. Enable a feature, choose which model it uses, and decide whether it loads when the app starts. Models stay on this Mac. Find their folders and delete downloads in Storage & Removal below."
         )
         add(section("Startup", startupCard()), to: pageStack)
         add(section("Speech to Text", speechToTextModelCard()), to: pageStack)
         add(section("Text to Speech", textToSpeechModelCard()), to: pageStack)
+        add(section("Storage & Removal", modelStorageCard()), to: pageStack)
         return pageStack
     }
+
+    private func modelStorageCard() -> NSStackView {
+        let group = groupStack()
+        group.spacing = 12
+        group.addArrangedSubview(wrappingLabel("Unload frees memory but keeps the download. Move to Trash removes a download; empty the Trash to reclaim disk space.", secondary: true))
+        for (title, url) in [("App data", coordinator.localDataDirectory), ("Voice models", coordinator.voiceModelsDirectory), ("Voice runtime", coordinator.voiceRuntimeDirectory)] {
+            let path = wrappingLabel("\(title): \(url.path)", secondary: true)
+            path.isSelectable = true
+            let reveal = ModelStorageButton(title: "Show in Finder", target: self, action: #selector(revealStorage(_:)))
+            reveal.url = url
+            reveal.bezelStyle = .rounded
+            group.addArrangedSubview(path)
+            group.addArrangedSubview(reveal)
+        }
+        let models = coordinator.storedModels
+        if models.isEmpty { group.addArrangedSubview(label("No model files stored.")) }
+        for (index, item) in models.enumerated() {
+            group.addArrangedSubview(label(item.title))
+            let path = wrappingLabel(item.url.path + (item.isManaged ? "" : "\nExternal file or link — manage it in Finder."), secondary: true)
+            path.isSelectable = true
+            path.identifier = NSUserInterfaceItemIdentifier("models.storage.path.\(index)")
+            group.addArrangedSubview(path)
+            let reveal = ModelStorageButton(title: "Show in Finder", target: self, action: #selector(revealStorage(_:)))
+            reveal.url = item.url
+            reveal.bezelStyle = .rounded
+            let remove = ModelStorageButton(title: "Move to Trash…", target: self, action: #selector(removeStoredModel(_:)))
+            remove.model = item
+            remove.bezelStyle = .rounded
+            remove.identifier = NSUserInterfaceItemIdentifier("models.storage.remove.\(index)")
+            remove.isEnabled = item.isManaged && coordinator.canRemoveModels
+            remove.toolTip = item.isManaged ? "Stops the model if loaded and moves this download to the Trash." : "External files are kept. Use Show in Finder to manage the original."
+            let actions = NSStackView(views: [reveal, remove])
+            actions.spacing = 8
+            group.addArrangedSubview(actions)
+        }
+        group.addArrangedSubview(wrappingLabel("To remove the app completely, move local data to the Trash first, then move Local Dictation from Applications to the Trash. Exported audio, transcripts, and external files are kept. macOS stores app preferences separately; Remove All Local Data clears them too.", secondary: true))
+        let removeAll = button("Remove All Local Data…", #selector(removeAllLocalData), id: "models.storage.removeAll")
+        removeAll.isEnabled = coordinator.canRemoveModels
+        group.addArrangedSubview(removeAll)
+        return group
+    }
+
+    @objc private func revealStorage(_ sender: ModelStorageButton) {
+        guard let url = sender.url else { return }
+        var existing = url
+        while !FileManager.default.fileExists(atPath: existing.path), existing.path != "/" {
+            existing.deleteLastPathComponent()
+        }
+        NSWorkspace.shared.activateFileViewerSelecting([existing])
+    }
+
+    @objc private func removeStoredModel(_ sender: ModelStorageButton) {
+        guard let item = sender.model else { return }
+        coordinator.confirmRemoveModel(item)
+        render(page, preserveScroll: true)
+    }
+
+    @objc private func removeAllLocalData() { coordinator.confirmAndRemoveLocalData() }
 
     private func startupCard() -> NSStackView {
         let group = groupStack()
