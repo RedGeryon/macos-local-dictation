@@ -6,7 +6,9 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class AppCoordinator: ObservableObject {
-    @Published private(set) var state: AppState = .starting
+    @Published private(set) var state: AppState = .starting {
+        didSet { transcriptionActivity.setActive(state.keepsAwakeForTranscription) }
+    }
     @Published private(set) var configuration: AppConfiguration
     @Published private(set) var settings: DictationSettings
     @Published private(set) var permissionStatus = DictationPermissionStatus(
@@ -57,6 +59,7 @@ final class AppCoordinator: ObservableObject {
     let permissionManager = PermissionManager()
     private let modelCatalogConfiguration: ModelCatalogConfiguration
 
+    private let transcriptionActivity = TranscriptionActivity()
     private let realtimeClient = RealtimeTranscriptionClient()
     private let modelDownloader = ModelDownloader()
     private let mediaFileTranscriber = MediaFileTranscriptionService()
@@ -992,7 +995,7 @@ final class AppCoordinator: ObservableObject {
                 self.mediaFileProgress = 1
                 self.finishMediaFileTranscription(returnToReady: true)
                 NSWorkspace.shared.open(outputURL)
-                self.showRecoverableMessage("Transcript saved in Documents → Local Dictation Transcripts → File Transcripts.")
+                self.showRecoverableMessage("Transcript saved in Documents → Local Dictation Transcripts → \(outputURL.deletingLastPathComponent().lastPathComponent).")
             } catch is CancellationError {
                 self.finishMediaFileTranscription(returnToReady: !self.isPowerTransitioning && !self.isQuitting)
             } catch {
@@ -1494,6 +1497,7 @@ final class AppCoordinator: ObservableObject {
     }
 
     func applicationWillTerminate() {
+        transcriptionActivity.setActive(false)
         speechEngineTask?.cancel()
         wakeRecoveryTask?.cancel()
         terminationDeadlineTask?.cancel()

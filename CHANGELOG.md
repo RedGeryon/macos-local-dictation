@@ -2,6 +2,15 @@
 
 ## Unreleased — Menu, Settings, and custom shortcuts
 
+- Active transcription keeps the Mac and display awake, including on battery,
+  and releases the hold when the task ends.
+- Conversation and media-file transcripts now share one folder per day under
+  Documents › Local Dictation Transcripts (for example, 2026-09-15).
+  Filenames include times, and duplicates receive a numbered suffix.
+  Existing transcripts remain in their original locations.
+- Speech to Text defaults to Keep loaded; an explicitly saved idle timeout
+  still takes precedence.
+
 - Every shortcut (Quick Dictation, Conversation Transcript, Read Selected Text,
   Pause or Resume Readback) is now user-configurable from a new Settings ›
   Shortcuts page, with conflict warnings and a Restore Defaults button. A

@@ -85,20 +85,14 @@ final class ConversationTranscriptWriter {
     private let microphoneName: String?
 
     static func transcriptsDirectory() throws -> URL {
-        let documents = try FileManager.default.url(
-            for: .documentDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )
-        return documents.appendingPathComponent("Local Dictation Transcripts", isDirectory: true)
+        try TranscriptStorage.directory()
     }
 
     init(startedAt: Date = Date(), microphoneName: String? = nil) throws {
         self.startedAt = startedAt
         self.microphoneName = microphoneName
         let fileManager = FileManager.default
-        let directory = try Self.transcriptsDirectory()
+        let directory = try TranscriptStorage.dailyDirectory(at: startedAt)
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
 
         let filenameFormatter = DateFormatter()

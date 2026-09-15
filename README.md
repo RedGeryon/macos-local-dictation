@@ -175,7 +175,10 @@ Microphone, Accessibility, and System Audio permissions are not required for
 this file-only workflow.
 The temporary audio is removed afterward, and the finished text opens from:
 
-`~/Documents/Local Dictation Transcripts/File Transcripts`
+`~/Documents/Local Dictation Transcripts/YYYY-MM-DD` (for example, `2026-09-15`).
+Conversation transcripts share the same daily folders. Filenames include times.
+The Mac and display stay awake during transcription, including on battery;
+automatic sleep resumes when transcription ends.
 
 ## Transcribe a two-sided conversation
 

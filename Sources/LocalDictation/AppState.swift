@@ -82,6 +82,17 @@ enum AppState: Equatable, Sendable {
         }
     }
 
+    /// Hold off automatic sleep through capture, recognition, and saving.
+    var keepsAwakeForTranscription: Bool {
+        switch self {
+        case .recording, .startingConversation, .recordingConversation, .savingConversation,
+             .inspectingMedia, .transcribingFile, .finalizing, .inserting, .canceling:
+            return true
+        default:
+            return false
+        }
+    }
+
     var isReady: Bool {
         self == .ready
     }

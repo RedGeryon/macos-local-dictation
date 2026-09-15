@@ -94,6 +94,8 @@ final class FeatureImprovementsTests: XCTestCase {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         var settings = LocalFeatureSettings()
+        XCTAssertNil(LocalFeatureSettings.load(defaults: defaults).dictation.idleUnloadMinutes)
+        XCTAssertNil(settings.dictation.idleUnloadMinutes)
         settings.dictation.idleUnloadMinutes = 15
         settings.readAloud.idleUnloadMinutes = 5
         settings.persist(defaults: defaults)

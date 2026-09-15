@@ -247,8 +247,7 @@ final class MenuBarController: NSObject {
             submenu.addItem(item("Open Last File Transcript", #selector(openLastFileTranscript)))
         }
         if submenu.numberOfItems > 0 { submenu.addItem(.separator()) }
-        submenu.addItem(item("Open Conversation Transcripts Folder", #selector(openConversationTranscriptsFolder)))
-        submenu.addItem(item("Open File Transcripts Folder", #selector(openFileTranscriptsFolder)))
+        submenu.addItem(item("Open Transcripts Folder", #selector(openConversationTranscriptsFolder)))
         submenu.addItem(.separator())
         submenu.addItem(disabledItem("Documents › Local Dictation Transcripts"))
         parent.submenu = submenu

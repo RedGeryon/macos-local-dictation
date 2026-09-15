@@ -64,7 +64,7 @@ Press **Control–Option–C** or choose **Start Conversation Transcript**. Your
 microphone is written as "You" and the Mac's audio output as "Speaker". A red
 timer appears in the menu bar. Press the shortcut again to stop and save.
 A notification confirms the save; click it to open the file. Transcripts are
-saved in **Documents › Local Dictation Transcripts** and are listed under
+saved in dated folders under **Documents › Local Dictation Transcripts** and are listed under
 **Transcripts** in the menu.
 
 ### Transcribe an audio or video file
@@ -72,7 +72,13 @@ saved in **Documents › Local Dictation Transcripts** and are listed under
 Choose **Transcribe Audio or Video File…**, pick a file, review the estimated
 time, and confirm. Supported: WAV, MP3, M4A, AAC, CAF, AIFF, FLAC, MP4, M4V,
 MOV. The finished text file opens automatically and is saved in
-**Documents › Local Dictation Transcripts › File Transcripts**.
+**Documents › Local Dictation Transcripts › YYYY-MM-DD** (for example,
+**2026-09-15**). Conversation and file transcripts share each day’s folder;
+filenames include times. Existing files stay where they were saved.
+
+During transcription, the app keeps the Mac and display awake, including on
+battery. Normal automatic sleep resumes when the job ends. Closing the lid
+or explicitly choosing Sleep can still suspend the Mac.
 
 ### Read text aloud
 

@@ -98,14 +98,7 @@ struct MediaFileTranscriptionEstimator {
 
 struct MediaTranscriptDocument {
     static func directory(fileManager: FileManager = .default) throws -> URL {
-        let documents = try fileManager.url(
-            for: .documentDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )
-        let parent = documents.appendingPathComponent("Local Dictation Transcripts", isDirectory: true)
-        let directory = parent.appendingPathComponent("File Transcripts", isDirectory: true)
+        let directory = try TranscriptStorage.directory(fileManager: fileManager)
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory
     }
@@ -115,7 +108,7 @@ struct MediaTranscriptDocument {
         at date: Date = Date(),
         fileManager: FileManager = .default
     ) throws -> URL {
-        let directory = try directory(fileManager: fileManager)
+        let directory = try TranscriptStorage.dailyDirectory(at: date, fileManager: fileManager)
         let rawName = sourceURL.deletingPathExtension().lastPathComponent
         let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: " -_"))
         let cleaned = String(rawName.unicodeScalars.map { allowed.contains($0) ? Character(String($0)) : "-" })
